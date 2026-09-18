@@ -1,0 +1,7 @@
+build_deb/
+dist/*.deb
+src/*.o
+libl2hc.so
+libl2hc.a
+tests/test_benchmark
+tests/test_correctness
