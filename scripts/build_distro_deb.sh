@@ -26,14 +26,10 @@ deb http://archive.debian.org/debian-security buster/updates main
 deb-src http://archive.debian.org/debian-security buster/updates main
 EOF
 elif grep -qi "bullseye" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian11" ]; then
-    echo "Configuring Debian Bullseye repositories..."
+    echo "Configuring Debian Bullseye archive repositories (EOL, archive only)..."
     cat << 'EOF' > /etc/apt/sources.list
-deb http://deb.debian.org/debian bullseye main contrib non-free
-deb-src http://deb.debian.org/debian bullseye main contrib non-free
-deb http://deb.debian.org/debian-security bullseye-security main contrib non-free
-deb-src http://deb.debian.org/debian-security bullseye-security main contrib non-free
-deb http://deb.debian.org/debian bullseye-updates main contrib non-free
-deb-src http://deb.debian.org/debian bullseye-updates main contrib non-free
+deb http://archive.debian.org/debian bullseye main contrib non-free
+deb-src http://archive.debian.org/debian bullseye main contrib non-free
 EOF
 else
     # Enable deb-src in standard repositories if not enabled
@@ -56,7 +52,11 @@ fi
 
 apt-get update -y || apt-get update --allow-unauthenticated -y || true
 
-# 2. Install essential build tools
+# 2. Pre-fix any broken packages in Docker image (especially important for Buster)
+dpkg --configure -a 2>/dev/null || true
+apt-get -f install -y 2>/dev/null || true
+
+# 3. Install essential build tools
 apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -65,7 +65,7 @@ apt-get install -y --no-install-recommends \
     git \
     python3 \
     ninja-build \
-    meson || apt-get install -y --fix-missing build-essential pkg-config dpkg-dev ca-certificates git python3 ninja-build meson || true
+    meson || apt-get install -y --fix-missing --no-install-recommends build-essential pkg-config dpkg-dev ca-certificates git python3 ninja-build meson || true
 
 # 3. Build native L2HC library & run tests
 make -C "${ROOT_DIR}" clean
