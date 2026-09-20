@@ -19,8 +19,13 @@ if grep -qi "buster" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian1
     cat << 'EOF' > /etc/apt/sources.list
 deb http://archive.debian.org/debian buster main contrib non-free
 deb-src http://archive.debian.org/debian buster main contrib non-free
-deb http://archive.debian.org/debian-security buster/updates main
-deb-src http://archive.debian.org/debian-security buster/updates main
+EOF
+    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
+elif grep -qi "bullseye" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian11" ]; then
+    echo "Configuring Debian Bullseye archive repositories..."
+    cat << 'EOF' > /etc/apt/sources.list
+deb http://archive.debian.org/debian bullseye main contrib non-free
+deb-src http://archive.debian.org/debian bullseye main contrib non-free
 EOF
     echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
 else
@@ -53,7 +58,7 @@ apt-get install -y --no-install-recommends \
     git \
     python3 \
     ninja-build \
-    meson || true
+    meson || apt-get install -y --fix-missing build-essential pkg-config dpkg-dev ca-certificates git python3 ninja-build meson || true
 
 # 3. Build native L2HC library & run tests
 make -C "${ROOT_DIR}" clean
