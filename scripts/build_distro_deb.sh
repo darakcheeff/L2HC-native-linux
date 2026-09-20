@@ -52,12 +52,20 @@ fi
 
 apt-get update -y || apt-get update --allow-unauthenticated -y || true
 
-# 2. Pre-fix any broken packages in Docker image (especially important for Buster)
+# 2. Pre-fix any broken packages in Docker image (Buster/Bullseye EOL libc6 mismatch)
 dpkg --configure -a 2>/dev/null || true
-apt-get -f install -y 2>/dev/null || true
+# Force upgrade libc6 to whatever version the archive has (fixes "held broken packages")
+apt-get install -y --no-install-recommends \
+    -o Dpkg::Options::="--force-confold" \
+    -o Dpkg::Options::="--force-confdef" \
+    --allow-downgrades \
+    libc6 libc-bin 2>/dev/null || true
+apt-get -f install -y -o Dpkg::Options::="--force-confold" 2>/dev/null || true
 
 # 3. Install essential build tools
 apt-get install -y --no-install-recommends \
+    -o Dpkg::Options::="--force-confold" \
+    -o Dpkg::Options::="--force-confdef" \
     build-essential \
     pkg-config \
     dpkg-dev \
