@@ -14,20 +14,27 @@ echo "=========================================================="
 export DEBIAN_FRONTEND=noninteractive
 
 # 1. Setup APT repositories (including deb-src)
+mkdir -p /etc/apt/apt.conf.d
+echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
+
 if grep -qi "buster" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian10" ]; then
     echo "Configuring Debian Buster archive repositories..."
     cat << 'EOF' > /etc/apt/sources.list
 deb http://archive.debian.org/debian buster main contrib non-free
 deb-src http://archive.debian.org/debian buster main contrib non-free
+deb http://archive.debian.org/debian-security buster/updates main
+deb-src http://archive.debian.org/debian-security buster/updates main
 EOF
-    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
 elif grep -qi "bullseye" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian11" ]; then
-    echo "Configuring Debian Bullseye archive repositories..."
+    echo "Configuring Debian Bullseye repositories..."
     cat << 'EOF' > /etc/apt/sources.list
-deb http://archive.debian.org/debian bullseye main contrib non-free
-deb-src http://archive.debian.org/debian bullseye main contrib non-free
+deb http://deb.debian.org/debian bullseye main contrib non-free
+deb-src http://deb.debian.org/debian bullseye main contrib non-free
+deb http://deb.debian.org/debian-security bullseye-security main contrib non-free
+deb-src http://deb.debian.org/debian-security bullseye-security main contrib non-free
+deb http://deb.debian.org/debian bullseye-updates main contrib non-free
+deb-src http://deb.debian.org/debian bullseye-updates main contrib non-free
 EOF
-    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
 else
     # Enable deb-src in standard repositories if not enabled
     if [ -f /etc/apt/sources.list ]; then
