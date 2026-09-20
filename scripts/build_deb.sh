@@ -16,12 +16,19 @@ mkdir -p "${PKG_DIR}/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5"
 mkdir -p "${PKG_DIR}/usr/lib/x86_64-linux-gnu"
 mkdir -p "${PKG_DIR}/usr/include"
 mkdir -p "${PKG_DIR}/usr/share/doc/l2hc-native-linux" 
+mkdir -p "${PKG_DIR}/etc/sysctl.d"
 
 # Copy files
 cp "${ROOT_DIR}/spa/libspa-codec-bluez5-l2hc.so" "${PKG_DIR}/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/"
 cp "${ROOT_DIR}/spa/libspa-bluez5.so" "${PKG_DIR}/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/"
 cp "${ROOT_DIR}/libl2hc.so" "${PKG_DIR}/usr/lib/x86_64-linux-gnu/"
 cp "${ROOT_DIR}/include/l2hc_native.h" "${PKG_DIR}/usr/include/"
+
+cat << 'EOF' > "${PKG_DIR}/etc/sysctl.d/99-bluetooth-audio.conf"
+# Socket buffers for high-bitrate Bluetooth audio (L2HC / LDAC)
+net.core.wmem_max = 2097152
+net.core.wmem_default = 524288
+EOF
 
 # Documentation
 cp "${ROOT_DIR}/README.md" "${PKG_DIR}/usr/share/doc/l2hc-native-linux/" || true
@@ -88,6 +95,9 @@ for uid in $(loginctl --no-legend list-users 2>/dev/null | awk '{print $1}'); do
         su - $(id -nu ${uid}) -c "export XDG_RUNTIME_DIR=/run/user/${uid}; systemctl --user daemon-reload; systemctl --user restart wireplumber.service pipewire.service 2>/dev/null" || true
     fi
 done
+
+# Apply sysctl settings
+sysctl --system >/dev/null 2>&1 || true
 
 echo "=== L2HC-native-linux installed successfully ==="
 echo "Huawei L2HC codec (320k / 640k / 960k / Auto) is now active in PipeWire."

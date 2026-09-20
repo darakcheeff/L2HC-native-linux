@@ -9,7 +9,7 @@
 
 #include <spa/param/audio/format.h>
 #include <spa/param/audio/format-utils.h>
-#include <spa/utils/endian.h>
+#include <endian.h>
 #include <spa/utils/string.h>
 #include <spa/utils/dict.h>
 #include <spa/pod/parser.h>
@@ -37,7 +37,14 @@ struct impl {
 	int bps;
 	int frame_samples;
 	int bitrate;
+	int base_bitrate;
 	int block_size;
+
+	/* Fragmentation */
+	uint8_t enc_buffer[2048];
+	size_t enc_total;
+	size_t frag_offset;
+	bool frag_in_progress;
 };
 
 static const struct media_codec_config l2hc_frequencies[] = {
@@ -55,7 +62,7 @@ static const struct media_codec_config l2hc_bit_depths[] = {
 };
 
 static int codec_fill_caps(const struct media_codec *codec, uint32_t flags,
-		const struct spa_dict *settings, uint8_t caps[A2DP_MAX_CAPS_SIZE])
+		uint8_t caps[A2DP_MAX_CAPS_SIZE])
 {
 	const a2dp_l2hc_t a2dp_l2hc = {
 		.info = codec->vendor,
@@ -249,23 +256,7 @@ static int codec_caps_preference_cmp(const struct media_codec *codec, uint32_t f
 		const struct media_codec_audio_info *info,
 		const struct spa_dict *global_settings)
 {
-	const a2dp_l2hc_t *c1 = caps1;
-	const a2dp_l2hc_t *c2 = caps2;
-	int r1, r2;
-
-	if (caps1_size < sizeof(*c1) || caps2_size < sizeof(*c2))
-		return 0;
-
-	/* Higher frequency preferred */
-	r1 = media_codec_get_config(l2hc_frequencies, SPA_N_ELEMENTS(l2hc_frequencies), c1->frequency);
-	r2 = media_codec_get_config(l2hc_frequencies, SPA_N_ELEMENTS(l2hc_frequencies), c2->frequency);
-	if (r1 != r2)
-		return r1 - r2;
-
-	/* Higher bit depth preferred */
-	r1 = media_codec_get_config(l2hc_bit_depths, SPA_N_ELEMENTS(l2hc_bit_depths), c1->bits_per_sample);
-	r2 = media_codec_get_config(l2hc_bit_depths, SPA_N_ELEMENTS(l2hc_bit_depths), c2->bits_per_sample);
-	return r1 - r2;
+	return 0;
 }
 
 static void *codec_init(const struct media_codec *codec, uint32_t flags,
@@ -319,16 +310,10 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 	else
 		this->bitrate = 192;
 
-	/* Cap to MTU */
-	size_t max_payload = (mtu > 13) ? (mtu - 13) : 800;
-	while (this->bitrate > 320 && (size_t)(this->bitrate * 10 / 8) > max_payload) {
-		if (this->bitrate == 960) this->bitrate = 640;
-		else if (this->bitrate == 640) this->bitrate = 480;
-		else if (this->bitrate == 480) this->bitrate = 320;
-	}
+	this->base_bitrate = this->bitrate;
 
-	fprintf(stderr, "l2hc: codec_init: rate=%u bps=%u ch=%u block_size=%d bitrate=%d mtu=%zu\n",
-		this->samplerate, this->bps, this->channels, this->block_size, this->bitrate, mtu);
+	fprintf(stderr, "l2hc: codec_init: rate=%u bps=%u ch=%u block_size=%d bitrate=%d (base=%d) mtu=%zu\n",
+		this->samplerate, this->bps, this->channels, this->block_size, this->bitrate, this->base_bitrate, mtu);
 	this->enc = l2hc_encoder_create();
 	if (!this->enc) {
 		fprintf(stderr, "l2hc: codec_init: FAILED to connect to encoder!\n");
@@ -387,7 +372,7 @@ static int codec_start_encode(void *data,
 	this->header->timestamp = htonl(timestamp);
 	this->header->ssrc = htonl(1);
 
-	/* 1 byte L2HC payload header: number of frames */
+	/* 1 byte L2HC payload header: written in codec_encode */
 	*this->payload = 0;
 
 	return sizeof(struct rtp_header) + 1;
@@ -400,47 +385,139 @@ static int codec_encode(void *data,
 {
 	struct impl *this = data;
 	uint32_t encoded_bytes = 0;
+	size_t max_payload;
 	int res;
 
-	if (src_size < (size_t)this->block_size)
+	max_payload = (this->mtu > 13) ? (this->mtu - 13) : 800;
+
+	/* Continuation of fragmented frame */
+	if (this->frag_in_progress) {
+		size_t remaining = this->enc_total - this->frag_offset;
+		size_t chunk = SPA_MIN(remaining, max_payload);
+
+		memcpy(dst, this->enc_buffer + this->frag_offset, chunk);
+		*dst_out = chunk;
+		this->frag_offset += chunk;
+
+		if (this->frag_offset < this->enc_total) {
+			*this->payload = 0xcc; /* Middle fragment */
+			*need_flush = NEED_FLUSH_FRAGMENT;
+		} else {
+			*this->payload = 0xdd; /* Final fragment */
+			*need_flush = NEED_FLUSH_ALL;
+			this->frag_in_progress = false;
+			this->frag_offset = 0;
+			this->enc_total = 0;
+		}
 		return 0;
+	}
+
+	if (src == NULL || src_size < (size_t)this->block_size) {
+		*dst_out = 0;
+		*need_flush = NEED_FLUSH_NO;
+		return 0;
+	}
 
 	static uint32_t enc_cnt = 0;
-	res = l2hc_encoder_encode(this->enc, src, this->block_size, dst, &encoded_bytes);
+	res = l2hc_encoder_encode(this->enc, src, this->block_size, this->enc_buffer, &encoded_bytes);
 	if (res != 0 || encoded_bytes == 0) {
 		fprintf(stderr, "l2hc: codec_encode: FAILED res=%d encoded_bytes=%u\n", res, encoded_bytes);
 		return -EINVAL;
 	}
 	if (++enc_cnt % 100 == 1) {
-		fprintf(stderr, "l2hc: codec_encode #%u: %d pcm bytes -> %u encoded bytes\n",
-			enc_cnt, this->block_size, encoded_bytes);
+		fprintf(stderr, "l2hc: codec_encode #%u: %d pcm bytes -> %u encoded bytes (bitrate=%d)\n",
+			enc_cnt, this->block_size, encoded_bytes, this->bitrate);
 	}
 
-	*dst_out = encoded_bytes;
-	*this->payload = 1; /* 1 frame in packet */
-	*need_flush = NEED_FLUSH_ALL;
+	this->enc_total = encoded_bytes;
+
+	if (this->enc_total <= max_payload) {
+		/* Fits in single packet */
+		memcpy(dst, this->enc_buffer, this->enc_total);
+		*dst_out = this->enc_total;
+		*this->payload = 0x01; /* 1 frame */
+		*need_flush = NEED_FLUSH_ALL;
+		this->frag_in_progress = false;
+	} else {
+		/* Exceeds MTU: split into fragments */
+		size_t chunk = max_payload;
+		if (this->enc_total == 1200) {
+			chunk = 600; /* Balanced 600 + 600 bytes for 960 kbps */
+		}
+
+		memcpy(dst, this->enc_buffer, chunk);
+		*dst_out = chunk;
+		this->frag_offset = chunk;
+		this->frag_in_progress = true;
+
+		*this->payload = 0xee; /* First fragment */
+		*need_flush = NEED_FLUSH_FRAGMENT;
+	}
 
 	return this->block_size;
 }
 
-
-static int codec_abr_process(void *data, size_t unsent)
-{
-	return -ENOTSUP;
-}
-
 static int codec_reduce_bitpool(void *data)
 {
-	return -ENOTSUP;
+	struct impl *this = data;
+	int prev = this->bitrate;
+
+	if (this->bitrate == 960) this->bitrate = 640;
+	else if (this->bitrate == 640) this->bitrate = 480;
+	else if (this->bitrate == 480) this->bitrate = 320;
+	else return this->bitrate;
+
+	l2hc_param_t p = {
+		.sample_rate = this->samplerate,
+		.bps = this->bps,
+		.channels = this->channels,
+		.frame_samples = this->frame_samples,
+		.bitrate_kbps = this->bitrate
+	};
+	l2hc_encoder_set_params(this->enc, &p);
+	fprintf(stderr, "l2hc: ABR reduce bitrate: %d -> %d kbps\n", prev, this->bitrate);
+	return this->bitrate;
 }
 
 static int codec_increase_bitpool(void *data)
 {
-	return -ENOTSUP;
+	struct impl *this = data;
+	int prev = this->bitrate;
+
+	if (this->bitrate >= this->base_bitrate)
+		return this->bitrate;
+
+	if (this->bitrate == 320) this->bitrate = (this->base_bitrate >= 480) ? 480 : 320;
+	else if (this->bitrate == 480) this->bitrate = (this->base_bitrate >= 640) ? 640 : 480;
+	else if (this->bitrate == 640) this->bitrate = (this->base_bitrate >= 960) ? 960 : 640;
+	else return this->bitrate;
+
+	if (this->bitrate != prev) {
+		l2hc_param_t p = {
+			.sample_rate = this->samplerate,
+			.bps = this->bps,
+			.channels = this->channels,
+			.frame_samples = this->frame_samples,
+			.bitrate_kbps = this->bitrate
+		};
+		l2hc_encoder_set_params(this->enc, &p);
+		fprintf(stderr, "l2hc: ABR increase bitrate: %d -> %d kbps\n", prev, this->bitrate);
+	}
+	return this->bitrate;
+}
+
+static int codec_abr_process(void *data, size_t unsent)
+{
+	struct impl *this = data;
+	if (unsent > 32768 && this->bitrate > 320) {
+		return codec_reduce_bitpool(this);
+	}
+	return 0;
 }
 
 #define L2HC_COMMON_DEFS \
 	.codec_id = A2DP_CODEC_VENDOR, \
+	.send_buf_size = 524288, \
 	.vendor = { \
 		.vendor_id = L2HC_VENDOR_ID, \
 		.codec_id = L2HC_CODEC_ID \
