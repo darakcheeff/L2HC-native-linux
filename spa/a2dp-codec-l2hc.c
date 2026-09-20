@@ -1,5 +1,5 @@
 /* Spa A2DP Huawei L2HC codec */
-/* SPDX-FileCopyrightText: Copyright © 2026 Antigravity */
+/* SPDX-FileCopyrightText: Copyright © 2026 darakcheeff */
 /* SPDX-License-Identifier: MIT */
 
 #include <unistd.h>
@@ -18,6 +18,14 @@
 #include "rtp.h"
 #include "media-codecs.h"
 #include "l2hc_bridge.h"
+
+#ifndef SPA_BLUETOOTH_AUDIO_CODEC_L2HC
+#define SPA_BLUETOOTH_AUDIO_CODEC_L2HC 0x70
+#define SPA_BLUETOOTH_AUDIO_CODEC_L2HC_320 0x71
+#define SPA_BLUETOOTH_AUDIO_CODEC_L2HC_480 0x72
+#define SPA_BLUETOOTH_AUDIO_CODEC_L2HC_640 0x73
+#define SPA_BLUETOOTH_AUDIO_CODEC_L2HC_960 0x74
+#endif
 
 #define L2HC_DEFAULT_BITRATE 960
 
@@ -61,8 +69,13 @@ static const struct media_codec_config l2hc_bit_depths[] = {
 	{ L2HC_BIT_DEPTH_16, 16, 0 },
 };
 
+#if defined(SPA_VERSION_BLUEZ5_CODEC_MEDIA) && (SPA_VERSION_BLUEZ5_CODEC_MEDIA >= 12)
+static int codec_fill_caps(const struct media_codec *codec, uint32_t flags,
+		const struct spa_dict *settings, uint8_t caps[A2DP_MAX_CAPS_SIZE])
+#else
 static int codec_fill_caps(const struct media_codec *codec, uint32_t flags,
 		uint8_t caps[A2DP_MAX_CAPS_SIZE])
+#endif
 {
 	const a2dp_l2hc_t a2dp_l2hc = {
 		.info = codec->vendor,

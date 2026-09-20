@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS ?= -O3 -march=native -ffast-math -Wall -Wextra -fPIC -Iinclude -Isrc
+CFLAGS ?= -O3 -ffast-math -Wall -Wextra -fPIC -Iinclude -Isrc
 LDFLAGS ?= -shared -lm
 
 LIB_TARGET = libl2hc.so
