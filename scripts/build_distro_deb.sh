@@ -17,67 +17,27 @@ export DEBIAN_FRONTEND=noninteractive
 mkdir -p /etc/apt/apt.conf.d
 echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
 
-if grep -qi "buster" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian10" ]; then
-    echo "Configuring Debian Buster archive repositories..."
-    cat << 'EOF' > /etc/apt/sources.list
-deb http://archive.debian.org/debian buster main contrib non-free
-deb-src http://archive.debian.org/debian buster main contrib non-free
-deb http://archive.debian.org/debian-security buster/updates main
-deb-src http://archive.debian.org/debian-security buster/updates main
-EOF
-elif grep -qi "bullseye" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian11" ]; then
-    echo "Configuring Debian Bullseye archive repositories (EOL, archive only)..."
-    cat << 'EOF' > /etc/apt/sources.list
-deb http://archive.debian.org/debian bullseye main contrib non-free
-deb-src http://archive.debian.org/debian bullseye main contrib non-free
-EOF
-else
-    # Enable deb-src in standard repositories if not enabled
-    if [ -f /etc/apt/sources.list ]; then
-        sed -i 's/^#\s*deb-src/deb-src/' /etc/apt/sources.list || true
-        # Also duplicate deb lines as deb-src if no deb-src exists
-        if ! grep -q "^deb-src" /etc/apt/sources.list; then
-            grep "^deb " /etc/apt/sources.list | sed 's/^deb /deb-src /' >> /etc/apt/sources.list || true
-        fi
-    fi
-    # Ubuntu 24.04+ deb822 sources
-    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-        sed -i 's/Types: deb/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources || true
-    fi
-    # Debian 13+ deb822 sources
-    if [ -f /etc/apt/sources.list.d/debian.sources ]; then
-        sed -i 's/Types: deb/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources || true
+# Enable deb-src in standard repositories if not enabled
+if [ -f /etc/apt/sources.list ]; then
+    sed -i 's/^#\s*deb-src/deb-src/' /etc/apt/sources.list || true
+    if ! grep -q "^deb-src" /etc/apt/sources.list; then
+        grep "^deb " /etc/apt/sources.list | sed 's/^deb /deb-src /' >> /etc/apt/sources.list || true
     fi
 fi
+# Ubuntu 24.04+ deb822 sources
+if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+    sed -i 's/Types: deb/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources || true
+fi
+# Debian 13+ deb822 sources
+if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+    sed -i 's/Types: deb/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources || true
+fi
 
-apt-get update -y || apt-get update --allow-unauthenticated -y || true
-
-# 2. Pre-fix any broken packages in Docker image (EOL Debian: libc6 version mismatch)
+apt-get update -y || true
 dpkg --configure -a 2>/dev/null || true
 
-# On EOL Debian images (specifically Bullseye), the Docker image contains newer
-# libc6 (u14) and perl-base (u5) than archive.debian.org (u11 and u3).
-# Since libc6-dev and perl strictly depend on exact binary/source versions,
-# we directly downgrade libc6, libc-bin, and perl-base via dpkg.
-if grep -qi "bullseye" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian11" ]; then
-    echo "Downgrading libc6, libc-bin, and perl-base to archive versions for Debian 11..."
-    mkdir -p /tmp/debs
-    (
-        cd /tmp/debs
-        APT_HELPER="$(which apt-helper 2>/dev/null || echo '/usr/lib/apt/apt-helper')"
-        $APT_HELPER download-file http://archive.debian.org/debian/pool/main/g/glibc/libc6_2.31-13+deb11u11_amd64.deb ./libc6.deb || true
-        $APT_HELPER download-file http://archive.debian.org/debian/pool/main/g/glibc/libc-bin_2.31-13+deb11u11_amd64.deb ./libc-bin.deb || true
-        $APT_HELPER download-file http://archive.debian.org/debian/pool/main/p/perl/perl-base_5.32.1-4+deb11u3_amd64.deb ./perl-base.deb || true
-        dpkg --force-all -i *.deb || true
-    )
-    rm -rf /tmp/debs
-fi
-apt-get -f install -y -o Dpkg::Options::="--force-confold" 2>/dev/null || true
-
-# 3. Install essential build tools
-DEBIAN_OPTIONS="-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef --allow-downgrades"
-# shellcheck disable=SC2086
-apt-get install -y --no-install-recommends $DEBIAN_OPTIONS \
+# 2. Install essential build tools
+apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     dpkg-dev \
@@ -188,27 +148,39 @@ EOF
 
         # Patch codec-loader.c to register l2hc
         LOADER_C="${PW_SRC_DIR}/spa/plugins/bluez5/codec-loader.c"
-        if [ -f "${LOADER_C}" ] && ! grep -q 'MEDIA_CODEC_FACTORY_LIB("l2hc")' "${LOADER_C}"; then
+        if [ -f "${LOADER_C}" ] && ! grep -q '"l2hc"' "${LOADER_C}"; then
             python3 -c "
 with open('${LOADER_C}', 'r') as f:
     c = f.read()
-target = 'MEDIA_CODEC_FACTORY_LIB(\"faststream\"),'
-if target in c:
-    c = c.replace(target, target + '\n\t\tMEDIA_CODEC_FACTORY_LIB(\"l2hc\"),')
-else:
-    c = c.replace('MEDIA_CODEC_FACTORY_LIB(\"sbc\"),', 'MEDIA_CODEC_FACTORY_LIB(\"l2hc\"),\n\t\tMEDIA_CODEC_FACTORY_LIB(\"sbc\"),')
+for macro in ['MEDIA_CODEC_FACTORY_LIB', 'A2DP_CODEC_FACTORY_LIB']:
+    if macro in c:
+        target = f'{macro}(\"faststream\"),'
+        if target in c:
+            c = c.replace(target, target + f'\n\t\t{macro}(\"l2hc\"),')
+        else:
+            target2 = f'{macro}(\"sbc\"),'
+            c = c.replace(target2, f'{macro}(\"l2hc\"),\n\t\t' + target2)
+        break
 with open('${LOADER_C}', 'w') as f:
     f.write(c)
 "
         fi
 
+        # Determine common codecs helper file (media-codecs.c in PW >= 0.3.65, a2dp-codecs.c in older PW)
+        COMMON_CODEC_C=""
+        if [ -f "${PW_SRC_DIR}/spa/plugins/bluez5/media-codecs.c" ]; then
+            COMMON_CODEC_C=", 'media-codecs.c'"
+        elif [ -f "${PW_SRC_DIR}/spa/plugins/bluez5/a2dp-codecs.c" ]; then
+            COMMON_CODEC_C=", 'a2dp-codecs.c'"
+        fi
+
         # Patch meson.build to compile spa-codec-bluez5-l2hc
         MESON_BUILD="${PW_SRC_DIR}/spa/plugins/bluez5/meson.build"
         if [ -f "${MESON_BUILD}" ] && ! grep -q "spa-codec-bluez5-l2hc" "${MESON_BUILD}"; then
-            cat << 'EOF' >> "${MESON_BUILD}"
+            cat << EOF >> "${MESON_BUILD}"
 
 bluez_codec_l2hc = shared_library('spa-codec-bluez5-l2hc',
-  [ 'a2dp-codec-l2hc.c', 'l2hc_bridge.c', 'l2hc_native.c', 'media-codecs.c' ],
+  [ 'a2dp-codec-l2hc.c', 'l2hc_bridge.c', 'l2hc_native.c'${COMMON_CODEC_C} ],
   include_directories : [ configinc ],
   c_args : codec_args,
   dependencies : [ spa_dep, mathlib ],
@@ -219,26 +191,34 @@ EOF
 
         # Setup meson build & compile bluez5 plugins
         cd "${PW_SRC_DIR}"
-        meson setup build -Dbluez5=enabled -Dsession-managers=[] -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled -Dsystemd=disabled || \
-        meson setup build -Dbluez5=enabled -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled || true
+        rm -rf build
+        meson setup build -Dbluez5=enabled -Dsession-managers=[] -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled || \
+        meson setup build -Dbluez5=enabled -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled || \
+        meson setup build -Dbluez5=enabled || true
 
-        if ninja -C build spa/plugins/bluez5/libspa-bluez5.so spa/plugins/bluez5/libspa-codec-bluez5-l2hc.so; then
+        ninja -C build spa/plugins/bluez5/libspa-bluez5.so spa/plugins/bluez5/libspa-codec-bluez5-l2hc.so || \
+        ninja -C build || true
+
+        SPA_PLUGIN=$(find build -name "libspa-bluez5.so" 2>/dev/null | head -n 1)
+        L2HC_PLUGIN=$(find build -name "libspa-codec-bluez5-l2hc.so" 2>/dev/null | head -n 1)
+        if [ -n "${SPA_PLUGIN}" ] && [ -n "${L2HC_PLUGIN}" ]; then
             mkdir -p "${PKG_DIR}/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5"
-            cp build/spa/plugins/bluez5/libspa-bluez5.so "${PKG_DIR}/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/"
-            cp build/spa/plugins/bluez5/libspa-codec-bluez5-l2hc.so "${PKG_DIR}/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/"
+            cp "${SPA_PLUGIN}" "${PKG_DIR}/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/"
+            cp "${L2HC_PLUGIN}" "${PKG_DIR}/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/"
             HAS_SPA=1
             echo "Successfully built PipeWire BlueZ5 SPA plugins!"
         fi
     fi
 fi
 
+if [ "${HAS_SPA}" -ne 1 ]; then
+    echo "ERROR: Failed to build PipeWire BlueZ5 SPA plugin for ${DISTRO_TAG}!" >&2
+    exit 1
+fi
+
 # 5. Generate package control & scripts
 cd "${ROOT_DIR}"
-if [ "${HAS_SPA}" -eq 1 ]; then
-    DEPS="pipewire (>= 0.3.19), wireplumber | pipewire-media-session, libspa-0.2-bluetooth"
-else
-    DEPS="libc6 (>= 2.17)"
-fi
+DEPS="pipewire (>= 0.3.19), wireplumber | pipewire-media-session, libspa-0.2-bluetooth"
 
 cat << EOF > "${PKG_DIR}/DEBIAN/control"
 Package: l2hc-native-linux

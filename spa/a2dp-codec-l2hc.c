@@ -16,7 +16,16 @@
 #include <spa/pod/builder.h>
 
 #include "rtp.h"
+#if __has_include("media-codecs.h")
 #include "media-codecs.h"
+#elif __has_include("a2dp-codecs.h")
+#include "a2dp-codecs.h"
+#define media_codec a2dp_codec
+#define media_codec_audio_info a2dp_codec_audio_info
+#define media_codec_config a2dp_codec_config
+#define media_codec_select_config a2dp_codec_select_config
+#define MEDIA_CODEC_EXPORT_DEF A2DP_CODEC_EXPORT_DEF
+#endif
 #include "l2hc_bridge.h"
 
 #ifndef SPA_BLUETOOTH_AUDIO_CODEC_L2HC
@@ -91,11 +100,28 @@ static int codec_fill_caps(const struct media_codec *codec, uint32_t flags,
 	return sizeof(a2dp_l2hc);
 }
 
+#if defined(SPA_VERSION_BLUEZ5_CODEC_MEDIA) && (SPA_VERSION_BLUEZ5_CODEC_MEDIA >= 16)
+static int codec_select_config(const struct media_codec *codec, uint32_t flags,
+		const void *caps, size_t caps_size,
+		const struct media_codec_audio_info *info,
+		const struct spa_dict *global_settings, uint8_t config[A2DP_MAX_CAPS_SIZE],
+		void **config_data)
+#elif defined(SPA_VERSION_BLUEZ5_CODEC_MEDIA) && (SPA_VERSION_BLUEZ5_CODEC_MEDIA >= 7)
 static int codec_select_config(const struct media_codec *codec, uint32_t flags,
 		const void *caps, size_t caps_size,
 		const struct media_codec_audio_info *info,
 		const struct spa_dict *global_settings, uint8_t config[A2DP_MAX_CAPS_SIZE])
+#else
+static int codec_select_config(const struct media_codec *codec, uint32_t flags,
+		const void *caps, size_t caps_size,
+		const struct media_codec_audio_info *info,
+		const struct spa_dict *global_settings, uint8_t config[A2DP_MAX_CAPS_SIZE])
+#endif
 {
+#if defined(SPA_VERSION_BLUEZ5_CODEC_MEDIA) && (SPA_VERSION_BLUEZ5_CODEC_MEDIA >= 16)
+	if (config_data)
+		*config_data = NULL;
+#endif
 	const a2dp_l2hc_t *c = caps;
 	a2dp_l2hc_t conf;
 	int res;

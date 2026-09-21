@@ -24,16 +24,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: "debian:10"
-            tag: "debian10"
-          - image: "debian:11"
-            tag: "debian11"
           - image: "debian:12"
             tag: "debian12"
           - image: "debian:13"
             tag: "debian13"
-          - image: "ubuntu:20.04"
-            tag: "ubuntu20.04"
           - image: "ubuntu:22.04"
             tag: "ubuntu22.04"
           - image: "ubuntu:24.04"
