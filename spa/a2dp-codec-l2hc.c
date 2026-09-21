@@ -25,6 +25,12 @@
 #define media_codec_config a2dp_codec_config
 #define media_codec_select_config a2dp_codec_select_config
 #define MEDIA_CODEC_EXPORT_DEF A2DP_CODEC_EXPORT_DEF
+#ifndef NEED_FLUSH_ALL
+#define NEED_FLUSH_ALL 1
+#endif
+#ifndef NEED_FLUSH_NO
+#define NEED_FLUSH_NO 0
+#endif
 #endif
 #include "l2hc_bridge.h"
 
@@ -200,9 +206,15 @@ static int codec_select_config(const struct media_codec *codec, uint32_t flags,
 	return sizeof(conf);
 }
 
+#if defined(SPA_VERSION_BLUEZ5_CODEC_MEDIA)
 static int codec_enum_config(const struct media_codec *codec, uint32_t flags,
 		const void *caps, size_t caps_size, uint32_t id, uint32_t idx,
 		struct spa_pod_builder *b, struct spa_pod **param)
+#else
+static int codec_enum_config(const struct media_codec *codec,
+		const void *caps, size_t caps_size, uint32_t id, uint32_t idx,
+		struct spa_pod_builder *b, struct spa_pod **param)
+#endif
 {
 	uint8_t cbuf[A2DP_MAX_CAPS_SIZE];
 	const a2dp_l2hc_t *conf = (const a2dp_l2hc_t *)cbuf;
@@ -210,7 +222,13 @@ static int codec_enum_config(const struct media_codec *codec, uint32_t flags,
 	uint32_t rate;
 	enum spa_audio_format format;
 
+#if defined(SPA_VERSION_BLUEZ5_CODEC_MEDIA) && (SPA_VERSION_BLUEZ5_CODEC_MEDIA >= 16)
+	if (codec_select_config(codec, flags, caps, caps_size, NULL, NULL, cbuf, NULL) < 0)
+#elif defined(SPA_VERSION_BLUEZ5_CODEC_MEDIA)
 	if (codec_select_config(codec, flags, caps, caps_size, NULL, NULL, cbuf) < 0)
+#else
+	if (codec_select_config(codec, 0, caps, caps_size, NULL, NULL, cbuf) < 0)
+#endif
 		return -ENOTSUP;
 
 	switch (conf->frequency) {

@@ -196,8 +196,7 @@ EOF
         meson setup build -Dbluez5=enabled -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled || \
         meson setup build -Dbluez5=enabled || true
 
-        ninja -C build spa/plugins/bluez5/libspa-bluez5.so spa/plugins/bluez5/libspa-codec-bluez5-l2hc.so || \
-        ninja -C build || true
+        ninja -C build spa/plugins/bluez5/libspa-bluez5.so spa/plugins/bluez5/libspa-codec-bluez5-l2hc.so
 
         SPA_PLUGIN=$(find build -name "libspa-bluez5.so" 2>/dev/null | head -n 1)
         L2HC_PLUGIN=$(find build -name "libspa-codec-bluez5-l2hc.so" 2>/dev/null | head -n 1)
