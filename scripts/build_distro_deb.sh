@@ -64,11 +64,12 @@ if grep -qi "bullseye" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debia
     mkdir -p /tmp/debs
     (
         cd /tmp/debs
-        curl -fsSLO http://archive.debian.org/debian/pool/main/g/glibc/libc6_2.31-13+deb11u11_amd64.deb
-        curl -fsSLO http://archive.debian.org/debian/pool/main/g/glibc/libc-bin_2.31-13+deb11u11_amd64.deb
-        curl -fsSLO http://archive.debian.org/debian/pool/main/p/perl/perl-base_5.32.1-4+deb11u3_amd64.deb
-        dpkg --force-all -i *.deb
-    ) || true
+        APT_HELPER="$(which apt-helper 2>/dev/null || echo '/usr/lib/apt/apt-helper')"
+        $APT_HELPER download-file http://archive.debian.org/debian/pool/main/g/glibc/libc6_2.31-13+deb11u11_amd64.deb ./libc6.deb || true
+        $APT_HELPER download-file http://archive.debian.org/debian/pool/main/g/glibc/libc-bin_2.31-13+deb11u11_amd64.deb ./libc-bin.deb || true
+        $APT_HELPER download-file http://archive.debian.org/debian/pool/main/p/perl/perl-base_5.32.1-4+deb11u3_amd64.deb ./perl-base.deb || true
+        dpkg --force-all -i *.deb || true
+    )
     rm -rf /tmp/debs
 fi
 apt-get -f install -y -o Dpkg::Options::="--force-confold" 2>/dev/null || true
