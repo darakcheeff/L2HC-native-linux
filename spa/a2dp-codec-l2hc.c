@@ -31,6 +31,9 @@
 #ifndef NEED_FLUSH_NO
 #define NEED_FLUSH_NO 0
 #endif
+#ifndef NEED_FLUSH_FRAGMENT
+#define NEED_FLUSH_FRAGMENT 1
+#endif
 #endif
 #include "l2hc_bridge.h"
 
@@ -307,11 +310,18 @@ static int codec_validate_config(const struct media_codec *codec, uint32_t flags
 	return 0;
 }
 
+#if defined(SPA_VERSION_BLUEZ5_CODEC_MEDIA)
 static int codec_caps_preference_cmp(const struct media_codec *codec, uint32_t flags,
 		const void *caps1, size_t caps1_size,
 		const void *caps2, size_t caps2_size,
 		const struct media_codec_audio_info *info,
 		const struct spa_dict *global_settings)
+#else
+static int codec_caps_preference_cmp(const struct media_codec *codec,
+		const void *caps1, size_t caps1_size,
+		const void *caps2, size_t caps2_size,
+		const struct media_codec_audio_info *info)
+#endif
 {
 	return 0;
 }
