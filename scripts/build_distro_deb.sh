@@ -55,15 +55,21 @@ apt-get update -y || apt-get update --allow-unauthenticated -y || true
 # 2. Pre-fix any broken packages in Docker image (EOL Debian: libc6 version mismatch)
 dpkg --configure -a 2>/dev/null || true
 
-# On EOL Debian images (Buster/Bullseye) the Docker image may have newer libc6/perl than
-# what is in archive.debian.org. We must downgrade them to match the archive versions.
-if grep -qi "bullseye\|buster" /etc/os-release 2>/dev/null || \
-   [ "${DISTRO_TAG}" = "debian11" ] || [ "${DISTRO_TAG}" = "debian10" ]; then
-    apt-get install -y --no-install-recommends \
-        -o Dpkg::Options::="--force-confold" \
-        -o Dpkg::Options::="--force-confdef" \
-        --allow-downgrades \
-        libc6 libc-bin libc6-dev perl perl-base 2>/dev/null || true
+# On EOL Debian images (specifically Bullseye), the Docker image contains newer
+# libc6 (u14) and perl-base (u5) than archive.debian.org (u11 and u3).
+# Since libc6-dev and perl strictly depend on exact binary/source versions,
+# we directly downgrade libc6, libc-bin, and perl-base via dpkg.
+if grep -qi "bullseye" /etc/os-release 2>/dev/null || [ "${DISTRO_TAG}" = "debian11" ]; then
+    echo "Downgrading libc6, libc-bin, and perl-base to archive versions for Debian 11..."
+    mkdir -p /tmp/debs
+    (
+        cd /tmp/debs
+        curl -fsSLO http://archive.debian.org/debian/pool/main/g/glibc/libc6_2.31-13+deb11u11_amd64.deb
+        curl -fsSLO http://archive.debian.org/debian/pool/main/g/glibc/libc-bin_2.31-13+deb11u11_amd64.deb
+        curl -fsSLO http://archive.debian.org/debian/pool/main/p/perl/perl-base_5.32.1-4+deb11u3_amd64.deb
+        dpkg --force-all -i *.deb
+    ) || true
+    rm -rf /tmp/debs
 fi
 apt-get -f install -y -o Dpkg::Options::="--force-confold" 2>/dev/null || true
 
