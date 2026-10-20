@@ -53,9 +53,32 @@ jobs:
           path: dist/l2hc-native-linux_1.0.0_${{ matrix.tag }}_amd64.deb
           if-no-files-found: error
 
+  build-universal:
+    name: Build Universal (Multi-ABI & DKMS)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential dpkg-dev
+
+      - name: Build Multi-ABI & DKMS Packages
+        run: |
+          bash scripts/build_multiabi_deb.sh
+          bash scripts/build_dkms_deb.sh
+
+      - name: Upload Universal packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-universal
+          path: dist/*.deb
+
   release:
     name: Publish Release
-    needs: build
+    needs: [build, build-universal]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     steps:
