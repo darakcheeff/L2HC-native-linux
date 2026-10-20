@@ -140,10 +140,70 @@ typedef struct {
     uint8_t frequency;
     uint8_t bitrate_high;
     uint8_t bitrate_low_frame_len;
-    uint8_t ch_mode;
 } __attribute__ ((packed)) a2dp_l2hc_t;
 #endif
 EOF
+        fi
+
+        # Patch audio.h and type-info.h
+        AUDIO_H="${PW_SRC_DIR}/spa/include/spa/param/bluetooth/audio.h"
+        if [ -f "${AUDIO_H}" ] && ! grep -q "SPA_BLUETOOTH_AUDIO_CODEC_L2HC" "${AUDIO_H}"; then
+            python3 -c "
+with open('${AUDIO_H}', 'r') as f:
+    c = f.read()
+target = 'SPA_BLUETOOTH_AUDIO_CODEC_CVSD'
+replacement = '''\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC = 0x70,
+\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC_320 = 0x71,
+\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC_480 = 0x72,
+\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC_640 = 0x73,
+\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC_960 = 0x74,
+
+\t''' + target
+if target in c:
+    c = c.replace(target, replacement, 1)
+    with open('${AUDIO_H}', 'w') as f:
+        f.write(c)
+"
+        fi
+
+        TYPE_INFO_H="${PW_SRC_DIR}/spa/include/spa/param/bluetooth/type-info.h"
+        if [ -f "${TYPE_INFO_H}" ] && ! grep -q "SPA_BLUETOOTH_AUDIO_CODEC_L2HC" "${TYPE_INFO_H}"; then
+            python3 -c "
+with open('${TYPE_INFO_H}', 'r') as f:
+    c = f.read()
+target = '{ SPA_BLUETOOTH_AUDIO_CODEC_CVSD,'
+replacement = '''\t{ SPA_BLUETOOTH_AUDIO_CODEC_L2HC, SPA_TYPE_Int, SPA_TYPE_INFO_BLUETOOTH_AUDIO_CODEC_BASE \"l2hc\", NULL },
+\t{ SPA_BLUETOOTH_AUDIO_CODEC_L2HC_320, SPA_TYPE_Int, SPA_TYPE_INFO_BLUETOOTH_AUDIO_CODEC_BASE \"l2hc_320\", NULL },
+\t{ SPA_BLUETOOTH_AUDIO_CODEC_L2HC_480, SPA_TYPE_Int, SPA_TYPE_INFO_BLUETOOTH_AUDIO_CODEC_BASE \"l2hc_480\", NULL },
+\t{ SPA_BLUETOOTH_AUDIO_CODEC_L2HC_640, SPA_TYPE_Int, SPA_TYPE_INFO_BLUETOOTH_AUDIO_CODEC_BASE \"l2hc_640\", NULL },
+\t{ SPA_BLUETOOTH_AUDIO_CODEC_L2HC_960, SPA_TYPE_Int, SPA_TYPE_INFO_BLUETOOTH_AUDIO_CODEC_BASE \"l2hc_960\", NULL },
+
+\t''' + target
+if target in c:
+    c = c.replace(target, replacement, 1)
+    with open('${TYPE_INFO_H}', 'w') as f:
+        f.write(c)
+"
+        fi
+
+        # Patch bluez5-dbus.c
+        DBUS_C="${PW_SRC_DIR}/spa/plugins/bluez5/bluez5-dbus.c"
+        if [ -f "${DBUS_C}" ] && ! grep -q "SPA_BLUETOOTH_AUDIO_CODEC_L2HC" "${DBUS_C}"; then
+            python3 -c "
+with open('${DBUS_C}', 'r') as f:
+    c = f.read()
+target = 'case SPA_BLUETOOTH_AUDIO_CODEC_LDAC:'
+replacement = '''case SPA_BLUETOOTH_AUDIO_CODEC_LDAC:
+\tcase SPA_BLUETOOTH_AUDIO_CODEC_L2HC:
+\tcase SPA_BLUETOOTH_AUDIO_CODEC_L2HC_320:
+\tcase SPA_BLUETOOTH_AUDIO_CODEC_L2HC_480:
+\tcase SPA_BLUETOOTH_AUDIO_CODEC_L2HC_640:
+\tcase SPA_BLUETOOTH_AUDIO_CODEC_L2HC_960:'''
+if target in c:
+    c = c.replace(target, replacement, 1)
+    with open('${DBUS_C}', 'w') as f:
+        f.write(c)
+"
         fi
 
         # Patch codec-loader.c to register l2hc
@@ -161,6 +221,15 @@ for macro in ['MEDIA_CODEC_FACTORY_LIB', 'A2DP_CODEC_FACTORY_LIB']:
             target2 = f'{macro}(\"sbc\"),'
             c = c.replace(target2, f'{macro}(\"l2hc\"),\n\t\t' + target2)
         break
+order_target = 'SPA_BLUETOOTH_AUDIO_CODEC_LC3,'
+order_rep = '''SPA_BLUETOOTH_AUDIO_CODEC_LC3,
+\t\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC,
+\t\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC_960,
+\t\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC_640,
+\t\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC_480,
+\t\tSPA_BLUETOOTH_AUDIO_CODEC_L2HC_320,'''
+if order_target in c:
+    c = c.replace(order_target, order_rep, 1)
 with open('${LOADER_C}', 'w') as f:
     f.write(c)
 "
@@ -289,6 +358,11 @@ cat << 'EOF' > "${PKG_DIR}/DEBIAN/postinst"
 set -e
 ldconfig 2>/dev/null || true
 sysctl --system >/dev/null 2>&1 || true
+
+if [ -f /usr/share/spa-0.2/bluez5/bluez-hardware.conf ] && [ ! -f /usr/local/share/spa-0.2/bluez5/bluez-hardware.conf ]; then
+    mkdir -p /usr/local/share/spa-0.2/bluez5
+    ln -sf /usr/share/spa-0.2/bluez5/bluez-hardware.conf /usr/local/share/spa-0.2/bluez5/bluez-hardware.conf
+fi
 
 for uid in $(loginctl --no-legend list-users 2>/dev/null | awk '{print $1}'); do
     if [ -d "/run/user/${uid}" ]; then

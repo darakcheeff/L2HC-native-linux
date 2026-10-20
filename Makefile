@@ -33,6 +33,6 @@ check: tests
 
 clean:
 	rm -f $(LIB_TARGET) $(STATIC_TARGET) src/*.o tests/test_benchmark tests/test_correctness
-	rm -rf dist build_deb
+	rm -rf build_*
 
 .PHONY: all tests check clean
