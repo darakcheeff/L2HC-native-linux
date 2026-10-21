@@ -146,18 +146,28 @@ static int codec_select_config(const struct media_codec *codec, uint32_t flags,
 	memset(&conf, 0, sizeof(conf));
 	conf.info = codec->vendor;
 
-	/* Select frequency: prefer 96kHz for 960k or Auto */
-	int preferred_rate = A2DP_CODEC_DEFAULT_RATE;
-	if (codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_960 ||
-	    codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC) {
+	/* Select frequency: strictly enforce 96kHz for 960k to fit MTU without truncation */
+	if (codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_960) {
 		if (c->frequency & L2HC_SAMPLING_FREQ_96000)
-			preferred_rate = 96000;
+			conf.frequency = L2HC_SAMPLING_FREQ_96000;
+		else
+			conf.frequency = L2HC_SAMPLING_FREQ_48000;
+	} else if (codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_640 ||
+	           codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_480 ||
+	           codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_320) {
+		if (c->frequency & L2HC_SAMPLING_FREQ_48000)
+			conf.frequency = L2HC_SAMPLING_FREQ_48000;
+		else if (c->frequency & L2HC_SAMPLING_FREQ_96000)
+			conf.frequency = L2HC_SAMPLING_FREQ_96000;
+		else
+			conf.frequency = L2HC_SAMPLING_FREQ_44100;
+	} else {
+		/* Auto */
+		if (c->frequency & L2HC_SAMPLING_FREQ_96000)
+			conf.frequency = L2HC_SAMPLING_FREQ_96000;
+		else
+			conf.frequency = L2HC_SAMPLING_FREQ_48000;
 	}
-	res = media_codec_select_config(l2hc_frequencies, SPA_N_ELEMENTS(l2hc_frequencies),
-			c->frequency, info ? info->rate : preferred_rate);
-	if (res < 0)
-		return -ENOTSUP;
-	conf.frequency = l2hc_frequencies[res].config;
 
 	/* Select bit depth: prefer 24-bit */
 	res = media_codec_select_config(l2hc_bit_depths, SPA_N_ELEMENTS(l2hc_bit_depths),
@@ -269,24 +279,30 @@ static int codec_enum_config(const struct media_codec *codec,
 		0);
 
 	spa_pod_builder_prop(b, SPA_FORMAT_AUDIO_rate, 0);
-	spa_pod_builder_push_choice(b, &f[1], SPA_CHOICE_None, 0);
-	struct spa_pod_choice *choice = (struct spa_pod_choice*)spa_pod_builder_frame(b, &f[1]);
-	uint32_t i = 0;
-	if (conf->frequency & L2HC_SAMPLING_FREQ_96000) {
-		if (i++ == 0) spa_pod_builder_int(b, 96000);
+	if (codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_960 && (conf->frequency & L2HC_SAMPLING_FREQ_96000)) {
 		spa_pod_builder_int(b, 96000);
-	}
-	if (conf->frequency & L2HC_SAMPLING_FREQ_48000) {
-		if (i++ == 0) spa_pod_builder_int(b, 48000);
+	} else if (conf->frequency == L2HC_SAMPLING_FREQ_48000) {
 		spa_pod_builder_int(b, 48000);
+	} else {
+		spa_pod_builder_push_choice(b, &f[1], SPA_CHOICE_None, 0);
+		struct spa_pod_choice *choice = (struct spa_pod_choice*)spa_pod_builder_frame(b, &f[1]);
+		uint32_t i = 0;
+		if (conf->frequency & L2HC_SAMPLING_FREQ_96000) {
+			if (i++ == 0) spa_pod_builder_int(b, 96000);
+			spa_pod_builder_int(b, 96000);
+		}
+		if (conf->frequency & L2HC_SAMPLING_FREQ_48000) {
+			if (i++ == 0) spa_pod_builder_int(b, 48000);
+			spa_pod_builder_int(b, 48000);
+		}
+		if (conf->frequency & L2HC_SAMPLING_FREQ_44100) {
+			if (i++ == 0) spa_pod_builder_int(b, 44100);
+			spa_pod_builder_int(b, 44100);
+		}
+		if (i > 1)
+			choice->body.type = SPA_CHOICE_Enum;
+		spa_pod_builder_pop(b, &f[1]);
 	}
-	if (conf->frequency & L2HC_SAMPLING_FREQ_44100) {
-		if (i++ == 0) spa_pod_builder_int(b, 44100);
-		spa_pod_builder_int(b, 44100);
-	}
-	if (i > 1)
-		choice->body.type = SPA_CHOICE_Enum;
-	spa_pod_builder_pop(b, &f[1]);
 
 	spa_pod_builder_prop(b, SPA_FORMAT_AUDIO_position, 0);
 	spa_pod_builder_push_array(b, &f[1]);
