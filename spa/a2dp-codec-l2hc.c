@@ -377,12 +377,8 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 
 	this->base_bitrate = this->bitrate;
 
-	/* Samples per frame: 5ms for 960 kbps (fits in MTU), 10ms for 640k and below */
-	if (this->bitrate == 960) {
-		this->frame_samples = this->samplerate / 200; /* 5ms: 240 @ 48k, 480 @ 96k */
-	} else {
-		this->frame_samples = this->samplerate / 100; /* 10ms: 480 @ 48k, 960 @ 96k */
-	}
+	/* Samples per frame: 10ms for all bitrates (required by FreeBuds hardware DSP) */
+	this->frame_samples = this->samplerate / 100; /* 10ms: 480 @ 48k, 960 @ 96k */
 	this->block_size = this->frame_samples * this->channels * (this->bps / 8);
 
 	fprintf(stderr, "l2hc: codec_init: rate=%u bps=%u ch=%u block_size=%d bitrate=%d (base=%d) mtu=%zu\n",
@@ -473,10 +469,10 @@ static int codec_encode(void *data,
 		this->frag_offset += chunk;
 
 		if (this->frag_offset < this->enc_total) {
-			*this->payload = 0xcc; /* Middle fragment */
+			*this->payload = 0x82; /* Middle fragment */
 			*need_flush = NEED_FLUSH_FRAGMENT;
 		} else {
-			*this->payload = 0xdd; /* Final fragment */
+			*this->payload = 0xa1; /* Final fragment (is_fragmented=1, is_last=1, frame_count=1) */
 			*need_flush = NEED_FLUSH_ALL;
 			this->frag_in_progress = false;
 			this->frag_offset = 0;
@@ -508,11 +504,11 @@ static int codec_encode(void *data,
 		/* Fits in single packet */
 		memcpy(dst, this->enc_buffer, this->enc_total);
 		*dst_out = this->enc_total;
-		*this->payload = 0x01; /* 1 frame */
+		*this->payload = 0x01; /* 1 frame (unfragmented) */
 		*need_flush = NEED_FLUSH_ALL;
 		this->frag_in_progress = false;
 	} else {
-		/* Exceeds MTU: split into fragments */
+		/* Exceeds MTU: split into fragments (standard A2DP RTP fragmentation) */
 		size_t chunk = max_payload;
 		if (this->enc_total == 1200) {
 			chunk = 600; /* Balanced 600 + 600 bytes for 960 kbps */
@@ -523,7 +519,7 @@ static int codec_encode(void *data,
 		this->frag_offset = chunk;
 		this->frag_in_progress = true;
 
-		*this->payload = 0xee; /* First fragment */
+		*this->payload = 0xc2; /* First fragment (is_fragmented=1, is_first=1, frame_count=2) */
 		*need_flush = NEED_FLUSH_FRAGMENT;
 	}
 
