@@ -637,7 +637,7 @@ static int codec_abr_process(void *data, size_t unsent)
 
 #define L2HC_COMMON_DEFS \
 	.codec_id = A2DP_CODEC_VENDOR, \
-	.send_buf_size = 0, \
+	.send_buf_size = 524288, \
 	.vendor = { \
 		.vendor_id = L2HC_VENDOR_ID, \
 		.codec_id = L2HC_CODEC_ID \
