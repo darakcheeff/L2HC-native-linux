@@ -446,14 +446,13 @@ static int codec_start_encode(void *data,
 		void *dst, size_t dst_size, uint16_t seqnum, uint32_t timestamp)
 {
 	struct impl *this = data;
-	const size_t header_size = sizeof(struct rtp_header) + sizeof(struct rtp_payload);
+	const size_t header_size = sizeof(struct rtp_header) + 1;
 
 	if (dst_size < header_size)
 		return -EINVAL;
 
 	this->header = (struct rtp_header *)dst;
 	this->payload = (struct rtp_payload *)((uint8_t *)dst + sizeof(struct rtp_header));
-
 	memset(dst, 0, header_size);
 
 	this->header->v = 2;
@@ -461,7 +460,6 @@ static int codec_start_encode(void *data,
 	this->header->sequence_number = htons(seqnum);
 
 	if (this->frag_in_progress) {
-		/* Continuation packet: keep identical timestamp as first fragment */
 		this->header->timestamp = htonl(this->frame_timestamp);
 	} else {
 		this->frame_timestamp = timestamp;
@@ -469,7 +467,7 @@ static int codec_start_encode(void *data,
 	}
 
 	this->header->ssrc = htonl(1);
-
+	*((uint8_t *)this->payload) = 0x01;
 	return header_size;
 }
 
@@ -499,16 +497,10 @@ static int codec_encode(void *data,
 		*dst_out = chunk;
 		this->frag_offset += chunk;
 
-		this->payload->is_fragmented = 1;
-		this->payload->is_first_fragment = 0;
-
+		
 		if (this->frag_offset < this->enc_total) {
-			this->payload->is_last_fragment = 0;
-			this->payload->frame_count = 2;
 			*need_flush = NEED_FLUSH_FRAGMENT;
 		} else {
-			this->payload->is_last_fragment = 1;
-			this->payload->frame_count = 1;
 			*need_flush = NEED_FLUSH_ALL;
 			this->frag_in_progress = false;
 			this->frag_offset = 0;
@@ -549,19 +541,13 @@ static int codec_encode(void *data,
 	} else {
 		/* Exceeds MTU: split into fragments across multiple packets (e.g. 960 kbps = 1200 bytes) */
 		size_t chunk = max_payload;
-		if (this->enc_total == 1200) {
-			chunk = 600; /* Balanced 600 + 600 bytes for 960k avoids radio drops and packet splits */
-		}
 
 		memcpy(dst, this->enc_buffer, chunk);
 		*dst_out = chunk;
 		this->frag_offset = chunk;
 		this->frag_in_progress = true;
 
-		this->payload->is_fragmented = 1;
-		this->payload->is_first_fragment = 1;
-		this->payload->is_last_fragment = 0;
-		this->payload->frame_count = 2;
+		
 
 		*need_flush = NEED_FLUSH_FRAGMENT;
 	}
