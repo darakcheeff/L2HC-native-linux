@@ -41,20 +41,20 @@
 
 Скачайте актуальные `.deb` пакеты со страницы [Releases](https://github.com/darakcheeff/L2HC-native-linux/releases/latest):
 
-### Вариант 1: Multi-ABI Fat-пакет (Рекомендуется — оффлайн-установка)
-Содержит скомпилированные модули для PipeWire **0.3.x, 1.0.x, 1.2.x, 1.4.x и 1.6.x**. При установке скрипт автоматически определяет установленную версию PipeWire и подключает нужный бинарник:
-
-```bash
-wget https://github.com/darakcheeff/L2HC-native-linux/releases/download/v1.1.1/l2hc-native-linux-multiabi_1.1.1_amd64.deb
-sudo dpkg -i l2hc-native-linux-multiabi_1.1.1_amd64.deb
-```
-
-### Вариант 2: DKMS-пакет локальной сборки
-Компилирует SPA-плагин локально под установленные заголовки PipeWire и автоматически пересобирается при обновлениях системы:
+### Вариант 1: DKMS-пакет локальной сборки (Рекомендуется — максимальная совместимость)
+Компилирует SPA-плагин локально под установленные системные заголовки и библиотеки PipeWire, что гарантирует 100% двоичную совместимость в любом дистрибутиве Linux. Автоматически пересобирается при обновлениях PipeWire:
 
 ```bash
 wget https://github.com/darakcheeff/L2HC-native-linux/releases/download/v1.1.1/l2hc-native-linux-dkms_1.1.1_all.deb
 sudo dpkg -i l2hc-native-linux-dkms_1.1.1_all.deb
+```
+
+### Вариант 2: Multi-ABI Fat-пакет (Оффлайн-установка)
+Содержит готовые скомпилированные модули для PipeWire **0.3.x, 1.0.x, 1.2.x, 1.4.x и 1.6.x** для систем без установленных пакетов разработки. При установке скрипт автоматически определяет версию PipeWire и подключает нужный бинарник:
+
+```bash
+wget https://github.com/darakcheeff/L2HC-native-linux/releases/download/v1.1.1/l2hc-native-linux-multiabi_1.1.1_amd64.deb
+sudo dpkg -i l2hc-native-linux-multiabi_1.1.1_amd64.deb
 ```
 
 ---

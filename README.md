@@ -41,20 +41,20 @@ Unlike bridge or emulation-based solutions, **L2HC-native-linux** runs entirely 
 
 Download the latest `.deb` packages from [Releases](https://github.com/darakcheeff/L2HC-native-linux/releases/latest):
 
-### Option 1: Multi-ABI Fat Package (Recommended — instant offline install)
-Bundles precompiled modules for PipeWire **0.3.x, 1.0.x, 1.2.x, 1.4.x, and 1.6.x**. Automatically detects your active PipeWire version on installation and links the corresponding binary:
-
-```bash
-wget https://github.com/darakcheeff/L2HC-native-linux/releases/download/v1.1.1/l2hc-native-linux-multiabi_1.1.1_amd64.deb
-sudo dpkg -i l2hc-native-linux-multiabi_1.1.1_amd64.deb
-```
-
-### Option 2: DKMS Local Source Builder
-Compiles the SPA plugin locally against your distribution's installed PipeWire headers and automatically recompiles on system updates:
+### Option 1: DKMS Local Source Builder (Recommended & Universally Compatible)
+Compiles the SPA plugin locally directly against your distribution's installed PipeWire headers, guaranteeing 100% binary and ABI compatibility across any Linux release. It automatically recompiles whenever PipeWire is updated:
 
 ```bash
 wget https://github.com/darakcheeff/L2HC-native-linux/releases/download/v1.1.1/l2hc-native-linux-dkms_1.1.1_all.deb
 sudo dpkg -i l2hc-native-linux-dkms_1.1.1_all.deb
+```
+
+### Option 2: Multi-ABI Fat Package (Offline precompiled)
+Bundles precompiled modules for PipeWire **0.3.x, 1.0.x, 1.2.x, 1.4.x, and 1.6.x** for systems without development packages. Automatically detects your active PipeWire version on installation and links the corresponding binary:
+
+```bash
+wget https://github.com/darakcheeff/L2HC-native-linux/releases/download/v1.1.1/l2hc-native-linux-multiabi_1.1.1_amd64.deb
+sudo dpkg -i l2hc-native-linux-multiabi_1.1.1_amd64.deb
 ```
 
 ---
