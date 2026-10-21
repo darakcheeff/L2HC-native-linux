@@ -301,7 +301,7 @@ bluez_codec_l2hc = shared_library('spa-codec-bluez5-l2hc',
 # 4. Compile with meson & ninja
 echo "[4/4] Compiling SPA BlueZ5 plugins..."
 cd "${BUILD_PW_DIR}"
-meson setup build -Dbluez5=enabled -Dsession-managers=[] -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled || meson setup build -Dbluez5=enabled -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled || meson setup build -Dbluez5=enabled || true
+meson setup build -Dbluez5=enabled -Dsession-managers=[] -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled -Dpipewire-v4l2=disabled -Dpipewire-alsa=disabled -Dsystemd=disabled || meson setup build -Dbluez5=enabled -Dsession-managers=[] -Ddocs=disabled -Dman=disabled -Dgstreamer=disabled || meson setup build -Dbluez5=enabled || true
 ninja -C build spa/plugins/bluez5/libspa-bluez5.so spa/plugins/bluez5/libspa-codec-bluez5-l2hc.so
 
 SPA_SO=$(find "${BUILD_PW_DIR}/build" -name "libspa-bluez5.so" | head -n1)
@@ -321,11 +321,19 @@ if [ ! -d "${SPA_DEST_DIR}" ]; then
 fi
 mkdir -p "${SPA_DEST_DIR}"
 
-# Ensure dpkg-divert exists
-if ! dpkg-divert --list "${SPA_DEST_DIR}/libspa-bluez5.so" 2>/dev/null | grep -q "libspa-bluez5.so.orig"; then
-    dpkg-divert --package l2hc-native-linux --no-rename --add \
-        --divert "${SPA_DEST_DIR}/libspa-bluez5.so.orig" \
-        "${SPA_DEST_DIR}/libspa-bluez5.so"
+# Remove symlink if left over from multiabi
+if [ -L "${SPA_DEST_DIR}/libspa-bluez5.so" ]; then
+    rm -f "${SPA_DEST_DIR}/libspa-bluez5.so"
+fi
+
+# Ensure dpkg-divert exists for stock library backup
+if [ -f "${SPA_DEST_DIR}/libspa-bluez5.so" ] && ! [ -L "${SPA_DEST_DIR}/libspa-bluez5.so" ]; then
+    if ! dpkg-divert --list "${SPA_DEST_DIR}/libspa-bluez5.so" 2>/dev/null | grep -q "libspa-bluez5.so.orig"; then
+        dpkg-divert --package l2hc-native-linux-dkms --no-rename --add \
+            --divert "${SPA_DEST_DIR}/libspa-bluez5.so.orig" \
+            "${SPA_DEST_DIR}/libspa-bluez5.so"
+        cp -p "${SPA_DEST_DIR}/libspa-bluez5.so" "${SPA_DEST_DIR}/libspa-bluez5.so.orig" 2>/dev/null || true
+    fi
 fi
 
 cp "${SPA_SO}" "${SPA_DEST_DIR}/libspa-bluez5.so"
@@ -365,9 +373,9 @@ Section: sound
 Priority: optional
 Architecture: all
 Provides: l2hc-native-linux
-Conflicts: l2hc-linux, l2hc-native-linux-multiabi
-Replaces: l2hc-linux, l2hc-native-linux, l2hc-native-linux-multiabi
-Depends: pipewire (>= 0.3.19), libspa-0.2-bluetooth, build-essential, meson, ninja-build, pkg-config, python3
+Conflicts: l2hc-linux, l2hc-native-linux-multiabi, l2hc-native-linux
+Replaces: l2hc-linux, l2hc-native-linux-multiabi, l2hc-native-linux
+Depends: pipewire (>= 0.3.19), libspa-0.2-bluetooth, build-essential, meson, ninja-build, pkg-config, python3, curl, ca-certificates, libglib2.0-dev, libdbus-1-dev, libbluetooth-dev, libsbc-dev
 Suggests: libpipewire-0.3-dev, libspa-0.2-dev
 Maintainer: darakcheeff <darakcheeff@users.noreply.github.com>
 Homepage: https://github.com/darakcheeff/L2HC-native-linux
@@ -406,13 +414,19 @@ set -e
 
 if [ "$1" = "remove" ] || [ "$1" = "abort-install" ] || [ "$1" = "disappear" ]; then
     SPA_DEST_DIR="/usr/lib/x86_64-linux-gnu/spa-0.2/bluez5"
-    rm -f "${SPA_DEST_DIR}/libspa-codec-bluez5-l2hc.so"
-    if dpkg-divert --list "${SPA_DEST_DIR}/libspa-bluez5.so" 2>/dev/null | grep -q "libspa-bluez5.so.orig"; then
-        dpkg-divert --package l2hc-native-linux --no-rename --remove \
-            "${SPA_DEST_DIR}/libspa-bluez5.so" || true
-        if [ -f "${SPA_DEST_DIR}/libspa-bluez5.so.orig" ]; then
-            cp -f "${SPA_DEST_DIR}/libspa-bluez5.so.orig" "${SPA_DEST_DIR}/libspa-bluez5.so"
+    if [ ! -d "${SPA_DEST_DIR}" ]; then
+        SPA_DEST_DIR="/usr/lib64/spa-0.2/bluez5"
+        if [ ! -d "${SPA_DEST_DIR}" ]; then
+            SPA_DEST_DIR="/usr/lib/spa-0.2/bluez5"
         fi
+    fi
+    rm -f "${SPA_DEST_DIR}/libspa-codec-bluez5-l2hc.so"
+    if [ -f "${SPA_DEST_DIR}/libspa-bluez5.so.orig" ]; then
+        cp -f "${SPA_DEST_DIR}/libspa-bluez5.so.orig" "${SPA_DEST_DIR}/libspa-bluez5.so"
+    fi
+    if dpkg-divert --list "${SPA_DEST_DIR}/libspa-bluez5.so" 2>/dev/null | grep -q "libspa-bluez5.so.orig"; then
+        dpkg-divert --package l2hc-native-linux-dkms --no-rename --remove \
+            "${SPA_DEST_DIR}/libspa-bluez5.so" || true
     fi
 fi
 ldconfig 2>/dev/null || true
