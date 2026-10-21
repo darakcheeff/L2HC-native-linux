@@ -375,7 +375,7 @@ Architecture: all
 Provides: l2hc-native-linux
 Conflicts: l2hc-linux, l2hc-native-linux-multiabi, l2hc-native-linux
 Replaces: l2hc-linux, l2hc-native-linux-multiabi, l2hc-native-linux
-Depends: pipewire (>= 0.3.19), libspa-0.2-bluetooth, build-essential, meson, ninja-build, pkg-config, python3, curl, ca-certificates, libglib2.0-dev, libdbus-1-dev, libbluetooth-dev, libsbc-dev
+Depends: pipewire (>= 0.3.19) | libpipewire-0.3-0 | libpipewire-0.3-0t64, libspa-0.2-bluetooth | libspa-0.2-modules, build-essential, meson, ninja-build, pkg-config, python3, curl, ca-certificates, libglib2.0-dev, libdbus-1-dev, libbluetooth-dev, libsbc-dev
 Suggests: libpipewire-0.3-dev, libspa-0.2-dev
 Maintainer: darakcheeff <darakcheeff@users.noreply.github.com>
 Homepage: https://github.com/darakcheeff/L2HC-native-linux
