@@ -73,6 +73,7 @@ struct impl {
 	bool frag_in_progress;
 	uint32_t frame_timestamp;
 	bool is_auto;
+	int clean_frames;
 };
 
 static const struct media_codec_config l2hc_frequencies[] = {
@@ -553,24 +554,24 @@ static int codec_reduce_bitpool(void *data)
 {
 	struct impl *this = data;
 	int prev = this->bitrate;
-
-	if (!this->is_auto)
-		return this->bitrate;
+	int min_bitrate = this->is_auto ? 320 : 480;
 
 	if (this->bitrate == 960) this->bitrate = 640;
-	else if (this->bitrate == 640) this->bitrate = 480;
-	else if (this->bitrate == 480) this->bitrate = 320;
+	else if (this->bitrate == 640 && min_bitrate <= 480) this->bitrate = 480;
+	else if (this->bitrate == 480 && min_bitrate <= 320) this->bitrate = 320;
 	else return this->bitrate;
 
-	l2hc_param_t p = {
-		.sample_rate = this->samplerate,
-		.bps = this->bps,
-		.channels = this->channels,
-		.frame_samples = this->frame_samples,
-		.bitrate_kbps = this->bitrate
-	};
-	l2hc_encoder_set_params(this->enc, &p);
-	fprintf(stderr, "l2hc: ABR reduce bitrate: %d -> %d kbps\n", prev, this->bitrate);
+	if (this->bitrate != prev) {
+		l2hc_param_t p = {
+			.sample_rate = this->samplerate,
+			.bps = this->bps,
+			.channels = this->channels,
+			.frame_samples = this->frame_samples,
+			.bitrate_kbps = this->bitrate
+		};
+		l2hc_encoder_set_params(this->enc, &p);
+		fprintf(stderr, "l2hc: ABR reduce bitrate: %d -> %d kbps\n", prev, this->bitrate);
+	}
 	return this->bitrate;
 }
 
@@ -578,9 +579,6 @@ static int codec_increase_bitpool(void *data)
 {
 	struct impl *this = data;
 	int prev = this->bitrate;
-
-	if (!this->is_auto)
-		return this->bitrate;
 
 	if (this->bitrate >= this->base_bitrate)
 		return this->bitrate;
@@ -607,10 +605,22 @@ static int codec_increase_bitpool(void *data)
 static int codec_abr_process(void *data, size_t unsent)
 {
 	struct impl *this = data;
-	if (!this->is_auto)
-		return 0;
-	if (unsent > 65536 && this->bitrate > 320) {
+
+	/* Huawei Fluoride reference: txq >= 2 packets threshold (~2400 bytes in socket buffer).
+	 * If buffer backs up, immediately reduce bitrate down to 640 kbps (single packet)
+	 * to prevent controller packet drops. */
+	if (unsent > 2400) {
+		this->clean_frames = 0;
 		return codec_reduce_bitpool(this);
+	} else if (unsent == 0 && this->bitrate < this->base_bitrate) {
+		this->clean_frames++;
+		/* After ~100ms (10 consecutive clean frames), recover bitrate back to base_bitrate */
+		if (this->clean_frames >= 10) {
+			this->clean_frames = 0;
+			return codec_increase_bitpool(this);
+		}
+	} else {
+		this->clean_frames = 0;
 	}
 	return 0;
 }
