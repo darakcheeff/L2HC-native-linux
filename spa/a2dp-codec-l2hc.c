@@ -461,13 +461,14 @@ static int codec_start_encode(void *data,
 
 	if (this->frag_in_progress) {
 		this->header->timestamp = htonl(this->frame_timestamp);
+		*((uint8_t *)this->payload) = 0x00;
 	} else {
 		this->frame_timestamp = timestamp;
 		this->header->timestamp = htonl(timestamp);
+		*((uint8_t *)this->payload) = 0x01;
 	}
 
 	this->header->ssrc = htonl(1);
-	*((uint8_t *)this->payload) = 0x01;
 	return header_size;
 }
 
@@ -497,7 +498,6 @@ static int codec_encode(void *data,
 		*dst_out = chunk;
 		this->frag_offset += chunk;
 
-		
 		if (this->frag_offset < this->enc_total) {
 			*need_flush = NEED_FLUSH_FRAGMENT;
 		} else {
@@ -532,10 +532,6 @@ static int codec_encode(void *data,
 		/* Fits in single packet (e.g. 640 kbps = 800 bytes) */
 		memcpy(dst, this->enc_buffer, this->enc_total);
 		*dst_out = this->enc_total;
-		this->payload->is_fragmented = 0;
-		this->payload->is_first_fragment = 0;
-		this->payload->is_last_fragment = 0;
-		this->payload->frame_count = 1;
 		*need_flush = NEED_FLUSH_ALL;
 		this->frag_in_progress = false;
 	} else {
@@ -546,8 +542,6 @@ static int codec_encode(void *data,
 		*dst_out = chunk;
 		this->frag_offset = chunk;
 		this->frag_in_progress = true;
-
-		
 
 		*need_flush = NEED_FLUSH_FRAGMENT;
 	}
