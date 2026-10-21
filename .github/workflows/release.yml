@@ -1,4 +1,4 @@
-name: Build & Release Multi-Distro DEB Packages
+name: Build & Release Universal DEB Packages
 
 on:
   push:
@@ -17,42 +17,6 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build (${{ matrix.tag }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: "debian:12"
-            tag: "debian12"
-          - image: "debian:13"
-            tag: "debian13"
-          - image: "ubuntu:22.04"
-            tag: "ubuntu22.04"
-          - image: "ubuntu:24.04"
-            tag: "ubuntu24.04"
-          - image: "ubuntu:devel"
-            tag: "ubuntu26.04"
-
-    container:
-      image: ${{ matrix.image }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Build Debian package
-        run: |
-          bash scripts/build_distro_deb.sh ${{ matrix.tag }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deb-${{ matrix.tag }}
-          path: dist/l2hc-native-linux_1.0.0_${{ matrix.tag }}_amd64.deb
-          if-no-files-found: error
-
   build-universal:
     name: Build Universal (Multi-ABI & DKMS)
     runs-on: ubuntu-latest
@@ -67,8 +31,12 @@ jobs:
 
       - name: Build Multi-ABI & DKMS Packages
         run: |
-          bash scripts/build_multiabi_deb.sh
-          bash scripts/build_dkms_deb.sh
+          TAG_VER="${GITHUB_REF#refs/tags/v}"
+          if [ -z "${TAG_VER}" ] || [ "${TAG_VER}" = "${GITHUB_REF}" ]; then
+            TAG_VER="1.1.1"
+          fi
+          bash scripts/build_multiabi_deb.sh "${TAG_VER}"
+          bash scripts/build_dkms_deb.sh "${TAG_VER}"
 
       - name: Upload Universal packages
         uses: actions/upload-artifact@v4
@@ -78,19 +46,18 @@ jobs:
 
   release:
     name: Publish Release
-    needs: [build, build-universal]
+    needs: [build-universal]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download all built packages
+      - name: Download built packages
         uses: actions/download-artifact@v4
         with:
+          name: deb-universal
           path: all_packages
-          pattern: deb-*
-          merge-multiple: true
 
       - name: List downloaded packages
         run: |
@@ -100,7 +67,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: all_packages/*.deb
-          generate_release_notes: true
+          generate_release_notes: false
           draft: false
           prerelease: false
         env:
