@@ -55,7 +55,6 @@ struct impl {
 	l2hc_handle_t enc;
 
 	struct rtp_header *header;
-	uint8_t *payload;
 
 	int mtu;
 	int samplerate;
@@ -447,44 +446,29 @@ static int codec_start_encode(void *data,
 {
 	struct impl *this = data;
 
-	if (this->frag_in_progress) {
-		/* Continuation packet: NO extra payload header byte!
-		 * The receiver concatenates RTP media payloads across packets with the same timestamp.
-		 * Writing an extra 0x01 byte here injects a corrupt byte into the middle of the Huffman stream!
-		 */
-		if (dst_size < sizeof(struct rtp_header))
-			return -EINVAL;
-
-		this->header = (struct rtp_header *)dst;
-		memset(this->header, 0, sizeof(struct rtp_header));
-		this->header->v = 2;
-		this->header->pt = 96;
-		this->header->sequence_number = htons(seqnum);
-		this->header->timestamp = htonl(this->frame_timestamp);
-		this->header->ssrc = htonl(1);
-		this->payload = NULL;
-		return sizeof(struct rtp_header); /* 12 bytes */
-	}
-
-	if (dst_size < sizeof(struct rtp_header) + 1)
+	if (dst_size < sizeof(struct rtp_header))
 		return -EINVAL;
 
 	this->header = (struct rtp_header *)dst;
-	this->payload = (uint8_t *)dst + sizeof(struct rtp_header);
-
-	memset(this->header, 0, sizeof(struct rtp_header) + 1);
+	memset(this->header, 0, sizeof(struct rtp_header));
 
 	this->header->v = 2;
 	this->header->pt = 96;
 	this->header->sequence_number = htons(seqnum);
-	this->frame_timestamp = timestamp;
-	this->header->timestamp = htonl(timestamp);
+
+	if (this->frag_in_progress) {
+		/* Continuation packet: keep identical timestamp as first fragment */
+		this->header->timestamp = htonl(this->frame_timestamp);
+	} else {
+		this->frame_timestamp = timestamp;
+		this->header->timestamp = htonl(timestamp);
+	}
+
 	this->header->ssrc = htonl(1);
 
-	/* 1 byte L2HC payload header on the first packet: frame count = 1 */
-	*this->payload = 0x01;
-
-	return sizeof(struct rtp_header) + 1; /* 13 bytes */
+	/* Exactly 12 bytes RTP header. L2HC has NO media payload header.
+	 * The frame data (sync byte 0x5c) begins directly at offset 0 of the payload. */
+	return sizeof(struct rtp_header);
 }
 
 static int codec_encode(void *data,
@@ -500,7 +484,8 @@ static int codec_encode(void *data,
 	if (!this || !this->enc)
 		return -EINVAL;
 
-	max_payload = (this->mtu > 13) ? (this->mtu - 13) : 800;
+	max_payload = (this->mtu > sizeof(struct rtp_header)) ?
+		(this->mtu - sizeof(struct rtp_header)) : 800;
 
 	/* Continuation of fragmented frame */
 	if (this->frag_in_progress) {
@@ -545,7 +530,6 @@ static int codec_encode(void *data,
 		/* Fits in single packet */
 		memcpy(dst, this->enc_buffer, this->enc_total);
 		*dst_out = this->enc_total;
-		*this->payload = 0x01; /* 1 frame */
 		*need_flush = NEED_FLUSH_ALL;
 		this->frag_in_progress = false;
 	} else {
@@ -560,7 +544,6 @@ static int codec_encode(void *data,
 		this->frag_offset = chunk;
 		this->frag_in_progress = true;
 
-		*this->payload = 0x01;
 		*need_flush = NEED_FLUSH_FRAGMENT;
 	}
 
