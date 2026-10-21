@@ -71,6 +71,7 @@ struct impl {
 	size_t enc_total;
 	size_t frag_offset;
 	bool frag_in_progress;
+	uint32_t frame_timestamp;
 	bool is_auto;
 };
 
@@ -146,28 +147,12 @@ static int codec_select_config(const struct media_codec *codec, uint32_t flags,
 	memset(&conf, 0, sizeof(conf));
 	conf.info = codec->vendor;
 
-	/* Select frequency: strictly enforce 96kHz for 960k to fit MTU without truncation */
-	if (codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_960) {
-		if (c->frequency & L2HC_SAMPLING_FREQ_96000)
-			conf.frequency = L2HC_SAMPLING_FREQ_96000;
-		else
-			conf.frequency = L2HC_SAMPLING_FREQ_48000;
-	} else if (codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_640 ||
-	           codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_480 ||
-	           codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_320) {
-		if (c->frequency & L2HC_SAMPLING_FREQ_48000)
-			conf.frequency = L2HC_SAMPLING_FREQ_48000;
-		else if (c->frequency & L2HC_SAMPLING_FREQ_96000)
-			conf.frequency = L2HC_SAMPLING_FREQ_96000;
-		else
-			conf.frequency = L2HC_SAMPLING_FREQ_44100;
-	} else {
-		/* Auto */
-		if (c->frequency & L2HC_SAMPLING_FREQ_96000)
-			conf.frequency = L2HC_SAMPLING_FREQ_96000;
-		else
-			conf.frequency = L2HC_SAMPLING_FREQ_48000;
-	}
+	/* Select frequency: default to 48kHz for rock-solid stability, 96kHz supported */
+	res = media_codec_select_config(l2hc_frequencies, SPA_N_ELEMENTS(l2hc_frequencies),
+			c->frequency, info ? info->rate : A2DP_CODEC_DEFAULT_RATE);
+	if (res < 0)
+		return -ENOTSUP;
+	conf.frequency = l2hc_frequencies[res].config;
 
 	/* Select bit depth: prefer 24-bit */
 	res = media_codec_select_config(l2hc_bit_depths, SPA_N_ELEMENTS(l2hc_bit_depths),
@@ -279,30 +264,24 @@ static int codec_enum_config(const struct media_codec *codec,
 		0);
 
 	spa_pod_builder_prop(b, SPA_FORMAT_AUDIO_rate, 0);
-	if (codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC_960 && (conf->frequency & L2HC_SAMPLING_FREQ_96000)) {
-		spa_pod_builder_int(b, 96000);
-	} else if (conf->frequency == L2HC_SAMPLING_FREQ_48000) {
+	spa_pod_builder_push_choice(b, &f[1], SPA_CHOICE_None, 0);
+	struct spa_pod_choice *choice = (struct spa_pod_choice*)spa_pod_builder_frame(b, &f[1]);
+	uint32_t i = 0;
+	if (conf->frequency & L2HC_SAMPLING_FREQ_48000) {
+		if (i++ == 0) spa_pod_builder_int(b, 48000);
 		spa_pod_builder_int(b, 48000);
-	} else {
-		spa_pod_builder_push_choice(b, &f[1], SPA_CHOICE_None, 0);
-		struct spa_pod_choice *choice = (struct spa_pod_choice*)spa_pod_builder_frame(b, &f[1]);
-		uint32_t i = 0;
-		if (conf->frequency & L2HC_SAMPLING_FREQ_96000) {
-			if (i++ == 0) spa_pod_builder_int(b, 96000);
-			spa_pod_builder_int(b, 96000);
-		}
-		if (conf->frequency & L2HC_SAMPLING_FREQ_48000) {
-			if (i++ == 0) spa_pod_builder_int(b, 48000);
-			spa_pod_builder_int(b, 48000);
-		}
-		if (conf->frequency & L2HC_SAMPLING_FREQ_44100) {
-			if (i++ == 0) spa_pod_builder_int(b, 44100);
-			spa_pod_builder_int(b, 44100);
-		}
-		if (i > 1)
-			choice->body.type = SPA_CHOICE_Enum;
-		spa_pod_builder_pop(b, &f[1]);
 	}
+	if (conf->frequency & L2HC_SAMPLING_FREQ_96000) {
+		if (i++ == 0) spa_pod_builder_int(b, 96000);
+		spa_pod_builder_int(b, 96000);
+	}
+	if (conf->frequency & L2HC_SAMPLING_FREQ_44100) {
+		if (i++ == 0) spa_pod_builder_int(b, 44100);
+		spa_pod_builder_int(b, 44100);
+	}
+	if (i > 1)
+		choice->body.type = SPA_CHOICE_Enum;
+	spa_pod_builder_pop(b, &f[1]);
 
 	spa_pod_builder_prop(b, SPA_FORMAT_AUDIO_position, 0);
 	spa_pod_builder_push_array(b, &f[1]);
@@ -418,15 +397,8 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 
 	this->base_bitrate = this->bitrate;
 
-	/* Samples per frame: 480 samples always:
-	 * At 96 kHz -> 480 samples = 5 ms (600 bytes @ 960k, fits in MTU without fragmentation)
-	 * At 48 kHz -> 480 samples = 10 ms (800 bytes @ 640k, fits in MTU without fragmentation)
-	 */
-	if (this->samplerate >= 88200) {
-		this->frame_samples = this->samplerate / 200; /* 5ms @ 96k: 480 samples */
-	} else {
-		this->frame_samples = this->samplerate / 100; /* 10ms @ 48k: 480 samples */
-	}
+	/* Samples per frame: 10ms for all bitrates (required by FreeBuds hardware DSP) */
+	this->frame_samples = this->samplerate / 100; /* 10ms: 480 @ 48k, 960 @ 96k */
 	this->block_size = this->frame_samples * this->channels * (this->bps / 8);
 
 	fprintf(stderr, "l2hc: codec_init: rate=%u bps=%u ch=%u block_size=%d bitrate=%d (base=%d) mtu=%zu\n",
@@ -486,11 +458,19 @@ static int codec_start_encode(void *data,
 	this->header->v = 2;
 	this->header->pt = 96;
 	this->header->sequence_number = htons(seqnum);
-	this->header->timestamp = htonl(timestamp);
+
+	if (this->frag_in_progress) {
+		/* Continuation fragment: keep identical timestamp as first fragment */
+		this->header->timestamp = htonl(this->frame_timestamp);
+	} else {
+		this->frame_timestamp = timestamp;
+		this->header->timestamp = htonl(timestamp);
+	}
+
 	this->header->ssrc = htonl(1);
 
 	/* 1 byte L2HC payload header: written in codec_encode */
-	*this->payload = 0;
+	*this->payload = 0x01;
 
 	return sizeof(struct rtp_header) + 1;
 }
@@ -505,7 +485,32 @@ static int codec_encode(void *data,
 	size_t max_payload;
 	int res;
 
+	if (!this || !this->enc)
+		return -EINVAL;
+
 	max_payload = (this->mtu > 13) ? (this->mtu - 13) : 800;
+
+	/* Continuation of fragmented frame */
+	if (this->frag_in_progress) {
+		size_t remaining = this->enc_total - this->frag_offset;
+		size_t chunk = SPA_MIN(remaining, max_payload);
+
+		memcpy(dst, this->enc_buffer + this->frag_offset, chunk);
+		*dst_out = chunk;
+		this->frag_offset += chunk;
+
+		*this->payload = 0x01;
+
+		if (this->frag_offset < this->enc_total) {
+			*need_flush = NEED_FLUSH_FRAGMENT;
+		} else {
+			*need_flush = NEED_FLUSH_ALL;
+			this->frag_in_progress = false;
+			this->frag_offset = 0;
+			this->enc_total = 0;
+		}
+		return 0;
+	}
 
 	if (src == NULL || src_size < (size_t)this->block_size) {
 		*dst_out = 0;
@@ -526,12 +531,25 @@ static int codec_encode(void *data,
 
 	this->enc_total = encoded_bytes;
 
-	size_t send_len = SPA_MIN((size_t)this->enc_total, max_payload);
-	memcpy(dst, this->enc_buffer, send_len);
-	*dst_out = send_len;
-	*this->payload = 0x01; /* 1 frame */
-	*need_flush = NEED_FLUSH_ALL;
-	this->frag_in_progress = false;
+	if (this->enc_total <= max_payload) {
+		/* Fits in single packet */
+		memcpy(dst, this->enc_buffer, this->enc_total);
+		*dst_out = this->enc_total;
+		*this->payload = 0x01; /* 1 frame */
+		*need_flush = NEED_FLUSH_ALL;
+		this->frag_in_progress = false;
+	} else {
+		/* Exceeds MTU: split into fragments across multiple packets */
+		size_t chunk = max_payload;
+
+		memcpy(dst, this->enc_buffer, chunk);
+		*dst_out = chunk;
+		this->frag_offset = chunk;
+		this->frag_in_progress = true;
+
+		*this->payload = 0x01;
+		*need_flush = NEED_FLUSH_FRAGMENT;
+	}
 
 	return this->block_size;
 }
@@ -604,7 +622,7 @@ static int codec_abr_process(void *data, size_t unsent)
 
 #define L2HC_COMMON_DEFS \
 	.codec_id = A2DP_CODEC_VENDOR, \
-	.send_buf_size = 524288, \
+	.send_buf_size = 0, \
 	.vendor = { \
 		.vendor_id = L2HC_VENDOR_ID, \
 		.codec_id = L2HC_CODEC_ID \
