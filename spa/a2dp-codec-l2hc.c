@@ -55,6 +55,7 @@ struct impl {
 	l2hc_handle_t enc;
 
 	struct rtp_header *header;
+	struct rtp_payload *payload;
 
 	int mtu;
 	int samplerate;
@@ -445,12 +446,15 @@ static int codec_start_encode(void *data,
 		void *dst, size_t dst_size, uint16_t seqnum, uint32_t timestamp)
 {
 	struct impl *this = data;
+	const size_t header_size = sizeof(struct rtp_header) + sizeof(struct rtp_payload);
 
-	if (dst_size < sizeof(struct rtp_header))
+	if (dst_size < header_size)
 		return -EINVAL;
 
 	this->header = (struct rtp_header *)dst;
-	memset(this->header, 0, sizeof(struct rtp_header));
+	this->payload = (struct rtp_payload *)((uint8_t *)dst + sizeof(struct rtp_header));
+
+	memset(dst, 0, header_size);
 
 	this->header->v = 2;
 	this->header->pt = 96;
@@ -466,9 +470,7 @@ static int codec_start_encode(void *data,
 
 	this->header->ssrc = htonl(1);
 
-	/* Exactly 12 bytes RTP header. L2HC has NO media payload header.
-	 * The frame data (sync byte 0x5c) begins directly at offset 0 of the payload. */
-	return sizeof(struct rtp_header);
+	return header_size;
 }
 
 static int codec_encode(void *data,
@@ -477,6 +479,7 @@ static int codec_encode(void *data,
 		size_t *dst_out, int *need_flush)
 {
 	struct impl *this = data;
+	const size_t header_size = sizeof(struct rtp_header) + sizeof(struct rtp_payload);
 	uint32_t encoded_bytes = 0;
 	size_t max_payload;
 	int res;
@@ -484,8 +487,8 @@ static int codec_encode(void *data,
 	if (!this || !this->enc)
 		return -EINVAL;
 
-	max_payload = (this->mtu > sizeof(struct rtp_header)) ?
-		(this->mtu - sizeof(struct rtp_header)) : 800;
+	max_payload = (this->mtu > (int)header_size) ?
+		(this->mtu - header_size) : 800;
 
 	/* Continuation of fragmented frame */
 	if (this->frag_in_progress) {
@@ -496,9 +499,16 @@ static int codec_encode(void *data,
 		*dst_out = chunk;
 		this->frag_offset += chunk;
 
+		this->payload->is_fragmented = 1;
+		this->payload->is_first_fragment = 0;
+
 		if (this->frag_offset < this->enc_total) {
+			this->payload->is_last_fragment = 0;
+			this->payload->frame_count = 2;
 			*need_flush = NEED_FLUSH_FRAGMENT;
 		} else {
+			this->payload->is_last_fragment = 1;
+			this->payload->frame_count = 1;
 			*need_flush = NEED_FLUSH_ALL;
 			this->frag_in_progress = false;
 			this->frag_offset = 0;
@@ -527,13 +537,17 @@ static int codec_encode(void *data,
 	this->enc_total = encoded_bytes;
 
 	if (this->enc_total <= max_payload) {
-		/* Fits in single packet */
+		/* Fits in single packet (e.g. 640 kbps = 800 bytes) */
 		memcpy(dst, this->enc_buffer, this->enc_total);
 		*dst_out = this->enc_total;
+		this->payload->is_fragmented = 0;
+		this->payload->is_first_fragment = 0;
+		this->payload->is_last_fragment = 0;
+		this->payload->frame_count = 1;
 		*need_flush = NEED_FLUSH_ALL;
 		this->frag_in_progress = false;
 	} else {
-		/* Exceeds MTU: split into fragments across multiple packets */
+		/* Exceeds MTU: split into fragments across multiple packets (e.g. 960 kbps = 1200 bytes) */
 		size_t chunk = max_payload;
 		if (this->enc_total == 1200) {
 			chunk = 600; /* Balanced 600 + 600 bytes for 960k avoids radio drops and packet splits */
@@ -543,6 +557,11 @@ static int codec_encode(void *data,
 		*dst_out = chunk;
 		this->frag_offset = chunk;
 		this->frag_in_progress = true;
+
+		this->payload->is_fragmented = 1;
+		this->payload->is_first_fragment = 1;
+		this->payload->is_last_fragment = 0;
+		this->payload->frame_count = 2;
 
 		*need_flush = NEED_FLUSH_FRAGMENT;
 	}
@@ -618,7 +637,7 @@ static int codec_abr_process(void *data, size_t unsent)
 
 #define L2HC_COMMON_DEFS \
 	.codec_id = A2DP_CODEC_VENDOR, \
-	.send_buf_size = 32768, \
+	.send_buf_size = 0, \
 	.vendor = { \
 		.vendor_id = L2HC_VENDOR_ID, \
 		.codec_id = L2HC_CODEC_ID \
