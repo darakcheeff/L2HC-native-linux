@@ -5,18 +5,21 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist"
 BUILD_DIR="${ROOT_DIR}/build_dkms"
 PKG_DIR="${BUILD_DIR}/pkg"
+VERSION="${1:-1.1.1}"
+SRC_DIR_NAME="l2hc-native-linux-${VERSION}"
 
 echo "=========================================================="
 echo " Building L2HC DKMS / Local Source Builder Package         "
+echo " Version: ${VERSION}"
 echo "=========================================================="
 
 make -C "${ROOT_DIR}" clean
 
 rm -rf "${BUILD_DIR}"
 mkdir -p "${PKG_DIR}/DEBIAN"
-mkdir -p "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/src"
-mkdir -p "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/spa"
-mkdir -p "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/include"
+mkdir -p "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/src"
+mkdir -p "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/spa"
+mkdir -p "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/include"
 mkdir -p "${PKG_DIR}/usr/lib/l2hc-native-linux"
 mkdir -p "${PKG_DIR}/usr/bin"
 mkdir -p "${PKG_DIR}/etc/sysctl.d"
@@ -25,12 +28,12 @@ mkdir -p "${PKG_DIR}/usr/share/doc/l2hc-native-linux-dkms"
 mkdir -p "${DIST_DIR}"
 
 # 1. Copy source code
-cp -r "${ROOT_DIR}/src/"* "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/src/"
-cp "${ROOT_DIR}/spa/a2dp-codec-l2hc.c" "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/spa/"
-cp "${ROOT_DIR}/spa/l2hc_bridge.c" "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/spa/"
-cp "${ROOT_DIR}/spa/l2hc_bridge.h" "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/spa/"
-cp -r "${ROOT_DIR}/include/"* "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/include/"
-cp "${ROOT_DIR}/Makefile" "${PKG_DIR}/usr/src/l2hc-native-linux-1.0.0/"
+cp -r "${ROOT_DIR}/src/"* "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/src/"
+cp "${ROOT_DIR}/spa/a2dp-codec-l2hc.c" "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/spa/"
+cp "${ROOT_DIR}/spa/l2hc_bridge.c" "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/spa/"
+cp "${ROOT_DIR}/spa/l2hc_bridge.h" "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/spa/"
+cp -r "${ROOT_DIR}/include/"* "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/include/"
+cp "${ROOT_DIR}/Makefile" "${PKG_DIR}/usr/src/${SRC_DIR_NAME}/"
 
 # 2. Sysctl config
 cat << 'EOF' > "${PKG_DIR}/etc/sysctl.d/99-bluetooth-audio.conf"
@@ -48,7 +51,7 @@ cat << 'BUILDER_EOF' > "${PKG_DIR}/usr/lib/l2hc-native-linux/l2hc-builder.sh"
 #!/bin/bash
 set -e
 
-SRC_DIR="/usr/src/l2hc-native-linux-1.0.0"
+SRC_DIR=$(ls -d /usr/src/l2hc-native-linux-* 2>/dev/null | tail -n 1)
 WORK_DIR="/var/lib/l2hc-native-linux"
 LOG_FILE="/var/log/l2hc-build.log"
 
@@ -351,13 +354,13 @@ ln -sf /usr/lib/l2hc-native-linux/l2hc-builder.sh "${PKG_DIR}/usr/bin/l2hc-rebui
 
 # 6. APT Post-Invoke hook
 cat << 'EOF' > "${PKG_DIR}/etc/apt/apt.conf.d/99l2hc-rebuild"
-DPkg::Post-Invoke {"if [ -x /usr/bin/l2hc-rebuild ] && [ -d /usr/src/l2hc-native-linux-1.0.0 ]; then /usr/bin/l2hc-rebuild >/var/log/l2hc-apt-rebuild.log 2>&1 || true; fi";};
+DPkg::Post-Invoke {"if [ -x /usr/bin/l2hc-rebuild ] && ls -d /usr/src/l2hc-native-linux-* >/dev/null 2>&1; then /usr/bin/l2hc-rebuild >/var/log/l2hc-apt-rebuild.log 2>&1 || true; fi";};
 EOF
 
 # 7. Control file
-cat << 'EOF' > "${PKG_DIR}/DEBIAN/control"
+cat << EOF > "${PKG_DIR}/DEBIAN/control"
 Package: l2hc-native-linux-dkms
-Version: 1.0.0
+Version: ${VERSION}
 Section: sound
 Priority: optional
 Architecture: all
@@ -422,7 +425,7 @@ exit 0
 EOF
 chmod 755 "${PKG_DIR}/DEBIAN/postrm"
 
-OUTPUT_DEB="${DIST_DIR}/l2hc-native-linux-dkms_1.0.0_all.deb"
+OUTPUT_DEB="${DIST_DIR}/l2hc-native-linux-dkms_${VERSION}_all.deb"
 dpkg-deb --build --root-owner-group "${PKG_DIR}" "${OUTPUT_DEB}"
 
 echo "=========================================================="

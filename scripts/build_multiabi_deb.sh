@@ -5,9 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist"
 BUILD_DIR="${ROOT_DIR}/build_multiabi"
 PKG_DIR="${BUILD_DIR}/pkg"
+VERSION="${1:-1.1.1}"
 
 echo "=========================================================="
 echo " Building L2HC Multi-ABI Fat Package (Auto-Detection)      "
+echo " Version: ${VERSION}"
 echo "=========================================================="
 
 # Build native library
@@ -49,9 +51,9 @@ for abi in pw-0.3 pw-1.0 pw-1.2 pw-1.4 pw-1.6; do
 done
 
 # 4. Control file
-cat << 'EOF' > "${PKG_DIR}/DEBIAN/control"
+cat << EOF > "${PKG_DIR}/DEBIAN/control"
 Package: l2hc-native-linux-multiabi
-Version: 1.0.0
+Version: ${VERSION}
 Section: sound
 Priority: optional
 Architecture: amd64
@@ -178,7 +180,7 @@ exit 0
 EOF
 chmod 755 "${PKG_DIR}/DEBIAN/postrm"
 
-OUTPUT_DEB="${DIST_DIR}/l2hc-native-linux-multiabi_1.0.0_amd64.deb"
+OUTPUT_DEB="${DIST_DIR}/l2hc-native-linux-multiabi_${VERSION}_amd64.deb"
 dpkg-deb --build --root-owner-group "${PKG_DIR}" "${OUTPUT_DEB}"
 
 echo "=========================================================="

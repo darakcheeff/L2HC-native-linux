@@ -64,10 +64,23 @@ static void bw_flush(L2hcBitWriter *w, uint8_t *out, int target_bytes) {
 }
 
 /* Global MDCT precomputed tables */
+static float *g_cos_table_240 = NULL;
 static float *g_cos_table_480 = NULL;
 static float *g_cos_table_960 = NULL;
 
 static void ensure_cos_tables(void) {
+    if (!g_cos_table_240) {
+        float *tbl = (float *)malloc(240 * 480 * sizeof(float));
+        const double factor = M_PI / 240.0;
+        for (int k = 0; k < 240; k++) {
+            const double k_term = ((double)k + 0.5) * factor;
+            for (int n = 0; n < 480; n++) {
+                double angle = ((double)n + 0.5 + 120.0) * k_term;
+                tbl[k * 480 + n] = (float)cos(angle);
+            }
+        }
+        g_cos_table_240 = tbl;
+    }
     if (!g_cos_table_480) {
         float *tbl = (float *)malloc(480 * 960 * sizeof(float));
         const double factor = M_PI / 480.0;
@@ -101,7 +114,7 @@ static void ensure_cos_tables(void) {
  * Net normalization factor matches reference libl2hc: sqrt(2.0 / N) = 1 / sqrt(N/2).
  */
 static inline void compute_fast_mdct(const float *in_2n, float *out_n, int N) {
-    const float *tbl = (N == 960) ? g_cos_table_960 : g_cos_table_480;
+    const float *tbl = (N == 960) ? g_cos_table_960 : ((N == 240) ? g_cos_table_240 : g_cos_table_480);
     const int stride = 2 * N;
     const float norm = 2.0f / (float)N; /* Exact MDCT scale matches CodecTypeCheckGetMdctValues */
     for (int k = 0; k < N; k++) {
@@ -190,11 +203,25 @@ int AudioL2hcEncSetParam(void *encoder, const L2hcEncParam *param) {
     st->frame_samples = param->frame_samples;
     st->bitrate_kbps = param->bitrate_kbps;
 
-    st->target_frame_bytes = (st->bitrate_kbps * 10) / 8;
+    int frame_ms = 10;
+    if (st->sample_rate > 0 && st->frame_samples > 0) {
+        frame_ms = (int)((st->frame_samples * 1000 + (st->sample_rate / 2)) / st->sample_rate);
+    }
+    if (frame_ms < 5) frame_ms = 5;
+
+    st->target_frame_bytes = (st->bitrate_kbps * frame_ms) / 8;
     st->target_frame_bits = st->target_frame_bytes * 8;
 
     if (st->frame_samples >= 960) {
         st->window = MDCT_HRA_WINDOW_960_10MS;
+    } else if (st->frame_samples == 480) {
+        if (st->sample_rate >= 88200) {
+            st->window = MDCT_HRA_WINDOW_960_5MS;
+        } else {
+            st->window = MDCT_HRA_WINDOW_480_10MS;
+        }
+    } else if (st->frame_samples == 240) {
+        st->window = MDCT_HRA_WINDOW_480_5MS;
     } else {
         st->window = MDCT_HRA_WINDOW_480_10MS;
     }
@@ -205,6 +232,12 @@ int AudioL2hcEncSetParam(void *encoder, const L2hcEncParam *param) {
 static inline const int16_t *get_active_band_table(const L2hcEncoderState *st) {
     if (st->frame_samples == 480) {
         return &BAND_480[st->band_table_idx * 33];
+    } else if (st->frame_samples == 960) {
+        return &BAND_960[st->band_table_idx * 33];
+    } else if (st->frame_samples == 240) {
+        return &BAND_240[st->band_table_idx * 33];
+    } else if (st->frame_samples == 120) {
+        return &BAND_120[st->band_table_idx * 33];
     }
     return &BAND_480[0];
 }
@@ -218,11 +251,16 @@ static inline const int16_t *get_active_band_table(const L2hcEncoderState *st) {
  */
 static void select_band_table_and_compute_sf(L2hcEncoderState *st) {
     const int N = st->frame_samples;
+    const int16_t *band_tables = BAND_480;
+    if (N == 960) band_tables = BAND_960;
+    else if (N == 240) band_tables = BAND_240;
+    else if (N == 120) band_tables = BAND_120;
+
     int best_t = 4;
     float min_cost = 1e30f;
 
     for (int t = 0; t < 8; t++) {
-        const int16_t *tbl = &BAND_480[t * 33];
+        const int16_t *tbl = &band_tables[t * 33];
         if (tbl[0] != 0 || tbl[32] != N) continue;
         float cost = 0.0f;
         for (int ch = 0; ch < st->channels; ch++) {
@@ -248,7 +286,7 @@ static void select_band_table_and_compute_sf(L2hcEncoderState *st) {
     }
 
     st->band_table_idx = best_t;
-    const int16_t *tbl = &BAND_480[best_t * 33];
+    const int16_t *tbl = &band_tables[best_t * 33];
     for (int ch = 0; ch < st->channels; ch++) {
         const float *spec = st->mdct_buf[ch];
         for (int b = 0; b < L2HC_NUM_BANDS; b++) {
@@ -730,7 +768,16 @@ static void pack_frame(L2hcEncoderState *st, L2hcBitWriter *w) {
     else if (st->sample_rate == 96000) sr_idx = 3;
 
     int ch_idx = (st->channels == 2) ? 1 : 0;
-    int fl_idx = (st->frame_samples >= 960) ? 3 : 2;
+    int fl_idx = 2;
+    if (st->frame_samples >= 960) {
+        fl_idx = 3; /* 10 ms @ 96k */
+    } else if (st->frame_samples == 480) {
+        fl_idx = 2; /* 10 ms @ 48k or 5 ms @ 96k */
+    } else if (st->frame_samples == 240) {
+        fl_idx = 1; /* 5 ms @ 48k */
+    } else if (st->frame_samples <= 120) {
+        fl_idx = 0; /* 2.5 ms */
+    }
     uint32_t header = (1 << 5) | (sr_idx << 3) | (ch_idx << 2) | fl_idx;
     bw_write(w, header, 7);
 

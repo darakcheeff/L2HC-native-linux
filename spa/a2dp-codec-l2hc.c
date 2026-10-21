@@ -32,7 +32,7 @@
 #define NEED_FLUSH_NO 0
 #endif
 #ifndef NEED_FLUSH_FRAGMENT
-#define NEED_FLUSH_FRAGMENT 1
+#define NEED_FLUSH_FRAGMENT 2
 #endif
 #endif
 #include "l2hc_bridge.h"
@@ -71,6 +71,7 @@ struct impl {
 	size_t enc_total;
 	size_t frag_offset;
 	bool frag_in_progress;
+	bool is_auto;
 };
 
 static const struct media_codec_config l2hc_frequencies[] = {
@@ -343,6 +344,7 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 
 	this->mtu = mtu;
 	this->channels = 2;
+	this->is_auto = (codec->id == SPA_BLUETOOTH_AUDIO_CODEC_L2HC);
 
 	switch (conf->frequency) {
 	case L2HC_SAMPLING_FREQ_96000: this->samplerate = 96000; break;
@@ -360,10 +362,6 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 	default: this->bps = 24; break;
 	}
 
-	/* Samples per 10ms frame */
-	this->frame_samples = this->samplerate / 100;
-	this->block_size = this->frame_samples * this->channels * (this->bps / 8);
-
 	if (conf->bitrate_high & L2HC_BITRATE_960K)
 		this->bitrate = 960;
 	else if (conf->bitrate_high & L2HC_BITRATE_640K)
@@ -378,6 +376,14 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 		this->bitrate = 192;
 
 	this->base_bitrate = this->bitrate;
+
+	/* Samples per frame: 5ms for 960 kbps (fits in MTU), 10ms for 640k and below */
+	if (this->bitrate == 960) {
+		this->frame_samples = this->samplerate / 200; /* 5ms: 240 @ 48k, 480 @ 96k */
+	} else {
+		this->frame_samples = this->samplerate / 100; /* 10ms: 480 @ 48k, 960 @ 96k */
+	}
+	this->block_size = this->frame_samples * this->channels * (this->bps / 8);
 
 	fprintf(stderr, "l2hc: codec_init: rate=%u bps=%u ch=%u block_size=%d bitrate=%d (base=%d) mtu=%zu\n",
 		this->samplerate, this->bps, this->channels, this->block_size, this->bitrate, this->base_bitrate, mtu);
@@ -529,6 +535,9 @@ static int codec_reduce_bitpool(void *data)
 	struct impl *this = data;
 	int prev = this->bitrate;
 
+	if (!this->is_auto)
+		return this->bitrate;
+
 	if (this->bitrate == 960) this->bitrate = 640;
 	else if (this->bitrate == 640) this->bitrate = 480;
 	else if (this->bitrate == 480) this->bitrate = 320;
@@ -550,6 +559,9 @@ static int codec_increase_bitpool(void *data)
 {
 	struct impl *this = data;
 	int prev = this->bitrate;
+
+	if (!this->is_auto)
+		return this->bitrate;
 
 	if (this->bitrate >= this->base_bitrate)
 		return this->bitrate;
@@ -576,7 +588,9 @@ static int codec_increase_bitpool(void *data)
 static int codec_abr_process(void *data, size_t unsent)
 {
 	struct impl *this = data;
-	if (unsent > 32768 && this->bitrate > 320) {
+	if (!this->is_auto)
+		return 0;
+	if (unsent > 65536 && this->bitrate > 320) {
 		return codec_reduce_bitpool(this);
 	}
 	return 0;
